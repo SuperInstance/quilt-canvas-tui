@@ -61,7 +61,10 @@ export class Fabric {
     this.tick = 0;
     this.receipts = [];
     this.violations = [];
+    this._signer = null; // setSigner() installs the identity plane (signing.mjs)
   }
+
+  setSigner(signer) { this._signer = signer; }
 
   graphDigest() {
     // python-faithful: cell_api.py graph_digest() uses f-string REPR, not
@@ -112,11 +115,13 @@ export class Fabric {
     this.cells.delete(addr);
     const parent = this.receipts.length ? this.receipts[this.receipts.length - 1].receipt_id : null;
     const rid = sha256hex(stableStringify({ op: "FORGET", addr, parent })).slice(0, 16);
-    this.receipts.push({
+    const rec = {
       schema: "quilt/cell-receipt@v1", receipt_id: rid, parent, op: "FORGET", addr,
       result: { cell: addr, forgotten: true }, graph_digest: this.graphDigest(),
       mutating: true, elapsed_ms: 0,
-    });
+    };
+    if (this._signer) rec.sig = this._signer.sign(rec);
+    this.receipts.push(rec);
     return { cell: addr, forgotten: true };
   }
 
@@ -210,6 +215,7 @@ export class Fabric {
       graph_digest: this.graphDigest(), mutating: ["BIND", "LINK", "EFFECT", "TICK"].includes(op),
       elapsed_ms: Date.now() - t0,
     };
+    if (this._signer) rec.sig = this._signer.sign(rec); // identity plane: auth layered on the rid binding
     this.receipts.push(rec);
     return rec;
   }
