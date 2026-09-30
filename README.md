@@ -39,8 +39,15 @@ the genome≠evidence law.
 ```
 cd bridge && node test_bridge.mjs        # 10/10
 node test_chiaroscuro.mjs                # 6/6
-node canvas.mjs /tmp/demo.sock           # the canvas (needs a controller)
+QUILT_SOCK=/tmp/demo.sock node canvas.mjs   # the canvas (needs a controller)
 ```
+
+`canvas.mjs` reads the socket path from the `QUILT_SOCK` env var (argv is
+ignored — the earlier `node canvas.mjs /tmp/demo.sock` form silently ran
+offline). With no controller reachable it falls back to offline local-fabric
+mode and the footer says `offline`. To drive it with your own fabric, see
+`bridge/fleet_board.mjs` — a dogfood controller that projects live fleet work
+lanes as cells (real receipt dials) with dependency links.
 
 ## For the team
 
