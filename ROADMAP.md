@@ -1,5 +1,11 @@
 # ROADMAP.md — the motion we are in (2026-09-30)
 
+> **REPO: https://github.com/SuperInstance/quilt-canvas-tui** (born this
+> session — the /tmp wipe that nearly took candor was a live warning; the
+> lane body is now pushed and Casey-gated like everything else). Web/WASM
+> sibling: SuperInstance/quilt-canvas (Sep 17 lineage — synergy surface,
+> not ours).
+
 > Doctrine: **we are building something bigger than a given repo.** A repo is
 > a lane's barracks; the fleet is the unit. Repos cross-pollinate; skills
 > migrate across abstractions; every artifact carries its own receipts.
