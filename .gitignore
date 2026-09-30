@@ -2,3 +2,4 @@ node_modules/
 socks/
 ctl.log
 *.sock
+claude-canvas/
