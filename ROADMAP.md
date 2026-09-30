@@ -56,6 +56,29 @@ protocol (controller = editor/driver, canvas = projection).
 - [ ] Casey queue: read the exp029-vs-exp033/035 tension face.
 - BLOCKER: push dead (creds wiped 9/29) — KEY ROTATION; ~9 branches local.
 
+### M9 — PoEM frontier (arXiv 2608.16032) — the security twin of the law
+- [x] **The gate is HEWN** (bridge/, FAIL-first 7/7 RED before impl):
+  - `fabric.verifyChain()` — splice/edit/reorder/truncate all detected,
+    named, and pinned (T1–T5).
+  - `fabric.gated()` — mutating ops execute only on a verified chain;
+    refusal is receipted as execution, not narration (T6–T7).
+  - Controller routes BIND/LINK/EFFECT/TICK through the gate; updates carry
+    `ledger:{ok,len,tip}` so the canvas sees chain health.
+  - **Seal-preimage fix:** receipt_id now binds only stored fields ({op, addr,
+    result, parent}). It used to also bind args — which receipts don't store —
+    so content edits were undetectable by construction. An unverifiable
+    ledger is FARMA-bait; fixed on ourselves first, documented not silent.
+  - Regression 23/23 green (bridge 10 + chiaroscuro 6 + poem 7).
+- [x] `scout-poem-frontier.md` — deep-read: FARMA/SENTINEL/capability
+  paradox; PoEM = genome/evidence law under an adversary; three open doors
+  (identity binding → trustedKeys + IETF draft; receipts-as-currency →
+  referral-graph economy; skip-taxonomy paper, unwritten); candor-lane
+  reading notes with four concrete deltas.
+- [ ] Doors (DRAWN, ranked): identity-plane synthesis (unowned fleet-wide) →
+  economic-floor falsifier (is the referral economy forgeable? pin it) →
+  skip-taxonomy paper (scooped-risk).
+- [ ] Casey merges; candor lane consumes §5 before resuming signed-WAL.
+
 ### M8 — Writings that outlast the lane (captain's order, 2026-09-30)
 - [x] **AI-Writings PR #71** (branch quilt-canvas-writings-2026-09-30, pushed):
   - `essays/2026-09-30-the-genome-and-the-evidence.md` — flagship essay: the

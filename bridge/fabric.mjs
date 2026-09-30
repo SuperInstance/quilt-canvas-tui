@@ -196,7 +196,14 @@ export class Fabric {
     result = snapshot(result);
     args = snapshot(args);
     const parent = this.receipts.length ? this.receipts[this.receipts.length - 1].receipt_id : null;
-    const raw = stableStringify({ op, addr, args, result, parent });
+    // PoEM discipline (arXiv 2608.16032): the ledger must be verifiable from
+    // its OWN contents. The rid therefore binds only stored fields —
+    // {op, addr, result, parent}. args are deliberately excluded from the
+    // preimage (they are not stored on the receipt; result carries the
+    // execution outcome, which is the testimony). A ledger whose ids bind
+    // data it doesn't carry cannot detect edits to what it does carry —
+    // an unverifiable ledger is FARMA-bait, not a defense.
+    const raw = stableStringify({ op, addr, result, parent });
     const rid = sha256hex(raw).slice(0, 16);
     const rec = {
       schema: "quilt/cell-receipt@v1", receipt_id: rid, parent, op, addr, result,
@@ -205,6 +212,50 @@ export class Fabric {
     };
     this.receipts.push(rec);
     return rec;
+  }
+
+  // PoEM gate (arXiv 2608.16032): the receipt chain is the tamper-evident
+  // ledger of what ACTUALLY executed. verifyChain recomputes every rid from
+  // the stored fields and walks parent linkage; a FARMA attacker can write
+  // any claim into memory (the canvas/projection), but a spliced, edited,
+  // reordered, or truncated entry breaks the chain and is named here.
+  verifyChain() {
+    const violations = [];
+    for (let i = 0; i < this.receipts.length; i++) {
+      const r = this.receipts[i];
+      if (r.schema !== "quilt/cell-receipt@v1") {
+        violations.push(`[${i}] schema ${JSON.stringify(r.schema)}`);
+        continue;
+      }
+      const wantParent = i === 0 ? null : this.receipts[i - 1].receipt_id;
+      if (r.parent !== wantParent) {
+        violations.push(`[${i}] parent ${JSON.stringify(r.parent)} != ${JSON.stringify(wantParent)}`);
+        continue;
+      }
+      const wantId = sha256hex(stableStringify({ op: r.op, addr: r.addr, result: r.result, parent: r.parent })).slice(0, 16);
+      if (r.receipt_id !== wantId) {
+        violations.push(`[${i}] receipt_id ${r.receipt_id} != recomputed ${wantId} (content edited?)`);
+      }
+    }
+    return { ok: violations.length === 0, checked: this.receipts.length, violations };
+  }
+
+  // The gate: mutating steps execute only if the ledger confirms the chain is
+  // intact. On tamper: refuse, mutate nothing, and RECEIPT THE REFUSAL —
+  // the refusal is execution, not narration, so it belongs in the same chain.
+  gated(op, addr, args = {}) {
+    const v = this.verifyChain();
+    if (!v.ok) {
+      return this._seal("REFUSE", addr, {
+        error: "LEDGER_UNVERIFIED",
+        detail: v.violations[0],
+        violations: v.violations.length,
+      }, {}, Date.now()).result;
+    }
+    if (!OPS.includes(op)) {
+      return this._seal(op, addr, { error: "UNKNOWN_OPCODE", detail: `op must be one of ${OPS}` }, args, Date.now()).result;
+    }
+    return this.op(op, addr, args).result;
   }
 }
 

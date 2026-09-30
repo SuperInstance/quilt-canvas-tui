@@ -26,11 +26,13 @@ function summaryUpdate() {
   for (const c of fabric.cells.values())
     for (const n of c.neighbors)
       if (c.addr < n) links.push([c.addr, n]);
+  const chain = fabric.verifyChain();
   return {
     type: "update",
     tick: fabric.tick,
     cells: [...fabric.cells.values()].map((c) => ({ addr: c.addr, dials: [...c.dials], kind: c.kind })),
     links,
+    ledger: { ok: chain.ok, len: chain.checked, tip: fabric.receipts.length ? fabric.receipts[fabric.receipts.length - 1].receipt_id : null },
   };
 }
 
@@ -51,7 +53,12 @@ const server = net.createServer((conn) => {
       } else if (msg.type === "opcode") {
         const { op, cell, args } = msg;
         let r;
+        // PoEM gate: BIND/LINK/EFFECT/TICK mutate — they run only if the
+        // ledger verifies. FORGET and VIEW stay direct (VIEW is pure; FORGET
+        // seals its own receipt). A refused op broadcasts the refusal as an
+        // update like any other execution outcome.
         if (op === "FORGET") r = fabric.forget(cell);
+        else if (["BIND", "LINK", "EFFECT", "TICK"].includes(op)) r = fabric.gated(op, cell, args || {});
         else r = fabric.op(op, cell, args || {}).result;
         process.stderr.write(`[controller] opcode ${op} ${cell} -> ${JSON.stringify(r).slice(0, 90)}\n`);
         const upd = summaryUpdate();
