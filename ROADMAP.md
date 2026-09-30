@@ -69,14 +69,35 @@ protocol (controller = editor/driver, canvas = projection).
     so content edits were undetectable by construction. An unverifiable
     ledger is FARMA-bait; fixed on ourselves first, documented not silent.
   - Regression 23/23 green (bridge 10 + chiaroscuro 6 + poem 7).
+- [x] **Identity plane v1 HEWN** (bridge/signing.mjs, 4/4 pins, S3 the
+  load-bearing one): HMAC-SHA256 over `rid|op|addr|parent` on every receipt;
+  key from QUILT_HMAC_KEY or a 0400 keyfile (group-writable refused); unsigned
+  is a declared state, never retro-backfilled. Closes what the hash chain
+  alone cannot: a public-rule chain repair (rewrite history, recompute every
+  rid — verifyChain passes, verifySignatures refuses).
 - [x] `scout-poem-frontier.md` — deep-read: FARMA/SENTINEL/capability
   paradox; PoEM = genome/evidence law under an adversary; three open doors
   (identity binding → trustedKeys + IETF draft; receipts-as-currency →
   referral-graph economy; skip-taxonomy paper, unwritten); candor-lane
   reading notes with four concrete deltas.
-- [ ] Doors (DRAWN, ranked): identity-plane synthesis (unowned fleet-wide) →
-  economic-floor falsifier (is the referral economy forgeable? pin it) →
-  skip-taxonomy paper (scooped-risk).
+- [x] `skip-taxonomy.md` — six observed skip classes; convergence rule: a
+  skip is safe exactly when the thing it owes its confidence to is consulted
+  at skip-time, not remembered. Falsifier stated.
+- [x] `sim/referral_oracle_sim.mjs` — economic-floor probe, 300 trials/class:
+  row-edits die under both rules; phantom/misread merges survive procedural
+  100%, die mechanical 0%; honest flips pass under both.
+- [x] `sim/receipts_deadline_sim.mjs` — exp036's motivating shape: CONSULT
+  costs Kx throughput and buys FLAT 0% forged-accept at every pressure;
+  HYBRID (suspicion-scoring, adaptive forger) degrades below READ (87–91% fa)
+  — PoEM's LLM-rewording result reproduced in miniature. Refines the paper's
+  conjecture: receipts-as-claims are worthless; ledger-consultation is the cost.
+- [x] **A teammate landed on the repo mid-session** (fleet_board.mjs dogfood
+  controller + README fix) — integrated via merge after pins; nothing of
+  theirs or ours modified. Shared-repo lesson: git identity at init; fetch
+  before every push.
+- [ ] Doors (DRAWN, ranked): identity-plane v2 (key rotation, multiple
+  signers, the IETF interop shape) → economic-floor constitution in
+  quilt-tools (mechanical flips, rides #26) → skip-taxonomy paper.
 - [ ] Casey merges; candor lane consumes §5 before resuming signed-WAL.
 
 ### M8 — Writings that outlast the lane (captain's order, 2026-09-30)
