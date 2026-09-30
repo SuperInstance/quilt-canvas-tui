@@ -1,0 +1,10 @@
+{"op":"BIND","cell":"E1","dials":[4,2]}
+{"op":"LINK","a":"E1","b":"D1"}
+{"op":"EFFECT","cell":"E1"}
+{"op":"TICK"}
+{"op":"BIND","cell":"E2","dials":[1,1],"kind":"sum"}
+{"op":"LINK","a":"E2","b":"E1"}
+{"op":"LINK","a":"E2","b":"D2"}
+{"op":"EFFECT","cell":"D3"}
+{"op":"TICK"}
+{"op":"VIEW","cell":"C1"}

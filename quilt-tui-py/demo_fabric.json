@@ -1,0 +1,24 @@
+{
+  "cells": [
+    {"addr": "A1", "dials": [8, 2], "kind": "generic"},
+    {"addr": "B1", "dials": [3, 1], "kind": "generic"},
+    {"addr": "C1", "dials": [0, 0], "kind": "sum"},
+    {"addr": "D1", "dials": [5, 3], "kind": "generic"},
+    {"addr": "A2", "dials": [2, 4], "kind": "generic"},
+    {"addr": "B2", "dials": [7, 0], "kind": "generic"},
+    {"addr": "C2", "dials": [0, 0], "kind": "product"},
+    {"addr": "D2", "dials": [4, 1], "kind": "generic"},
+    {"addr": "A3", "dials": [6, 2], "kind": "generic"},
+    {"addr": "B3", "dials": [1, 5], "kind": "generic"},
+    {"addr": "C3", "dials": [0, 0], "kind": "max"},
+    {"addr": "D3", "dials": [9, 1], "kind": "generic"},
+    {"addr": "A4", "dials": [2, 2], "kind": "generic"}
+  ],
+  "links": [
+    ["A1", "B1"], ["B1", "C1"], ["C1", "D1"],
+    ["A2", "B2"], ["B2", "C2"], ["C2", "D2"],
+    ["A3", "B3"], ["B3", "C3"], ["C3", "D3"],
+    ["A1", "A2"], ["B1", "B2"], ["D1", "D2"],
+    ["A4", "A3"], ["A4", "B3"], ["B2", "D2"]
+  ]
+}

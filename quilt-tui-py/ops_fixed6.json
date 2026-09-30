@@ -1,0 +1,1 @@
+[{"op":"BIND","cell":"A1","dials":[1,2]},{"op":"BIND","cell":"B1","dials":[3]},{"op":"LINK","a":"A1","b":"B1"},{"op":"EFFECT","cell":"A1"},{"op":"TICK"},{"op":"VIEW","cell":"A1"}]

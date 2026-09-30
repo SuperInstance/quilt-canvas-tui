@@ -1,0 +1,4 @@
+node_modules/
+socks/
+ctl.log
+*.sock

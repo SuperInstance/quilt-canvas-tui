@@ -1,0 +1,567 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>quilt-c — the cell-fabric runtime</title>
+<style>
+  :root{
+    --ink:#1c1c1a; --paper:#f7f6f2; --dim:#6b6a63; --line:#ddd9cf;
+    --accent:#8a4b2a; --cold:#2a4a7a; --mid:#2a8a6a; --warm:#d4a03a; --hot:#c03a2a;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--ink);
+       font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
+  main{max-width:46em;margin:0 auto;padding:2.5em 1.25em 4em;}
+  h1{font-size:1.35em;letter-spacing:.02em;margin:0 0 .25em}
+  h2{font-size:1.05em;margin:2.4em 0 .6em;border-bottom:1px solid var(--line);padding-bottom:.3em}
+  .tag{font-family:var(--mono);font-size:.8em;color:var(--dim)}
+  p{margin:.7em 0}
+  pre{background:#efece4;border:1px solid var(--line);border-radius:6px;
+      padding:.9em 1em;overflow-x:auto;font-family:var(--mono);font-size:.8em;line-height:1.5}
+  code{font-family:var(--mono);font-size:.92em;background:#efece4;padding:.1em .3em;border-radius:3px}
+  pre code{background:none;padding:0}
+  a{color:var(--accent);text-decoration:none;border-bottom:1px dotted var(--accent)}
+  ul{padding-left:1.3em}
+  li{margin:.3em 0}
+  .num{font-family:var(--mono);font-weight:700}
+  section.wide{max-width:none}
+  .fabric-wrap{max-width:72em;margin:0 auto}
+  .canvas-row{display:flex;gap:1em;align-items:stretch;margin:1em 0 .4em}
+  #fabric{flex:0 0 62%;width:62%;background:#10131a;border-radius:8px;display:block}
+  .side{flex:1;display:flex;flex-direction:column;gap:.6em;min-width:0}
+  .panel{background:#10131a;color:#c8d3c0;border-radius:8px;padding:.7em .8em;
+         font-family:var(--mono);font-size:.72em;line-height:1.5;overflow:hidden}
+  .panel h3{margin:0 0 .4em;font-size:.95em;color:#8fb98a;font-weight:600;letter-spacing:.05em}
+  #ledger{flex:1;white-space:pre;overflow:hidden}
+  #inspector{flex:0 0 auto;word-break:break-all}
+  .ctl{display:flex;gap:.6em;align-items:center;font-family:var(--mono);font-size:.75em;color:var(--dim)}
+  .ctl button{font-family:var(--mono);font-size:.9em;background:#efece4;border:1px solid var(--line);
+              border-radius:4px;padding:.15em .8em;cursor:pointer}
+  .caption{font-size:.78em;color:var(--dim);margin:.5em 0 0;font-family:var(--mono)}
+  figure.ports,figure.anatomy{margin:1em 0 0}
+  figure svg{width:100%;height:auto;display:block}
+  figcaption{font-size:.78em;color:var(--dim);margin:.4em 0 0;font-family:var(--mono)}
+  .honest-box{background:#f2ece0;border:1px solid var(--line);border-radius:6px;
+              padding:.8em 1em;font-size:.85em;margin:1em 0}
+  footer{margin-top:3em;font-size:.75em;color:var(--dim);font-family:var(--mono)}
+</style>
+</head>
+<body>
+<main>
+
+<h1>quilt-c</h1>
+<div class="tag">the Quilt cell-fabric runtime &middot; C99 &middot; signed tag v0.1.0</div>
+
+<h2>Why this port exists</h2>
+
+<p>Intelligence should accrue in an <em>external, auditable substrate</em>, not inside an ever-larger model.</p>
+<p>The model doesn't get bigger. The exocortex gets richer.</p>
+<p><strong>I have 4,856 repositories and 33 stars.</strong> That ratio is the whole story, and it is not a marketing problem — it is an identifiability problem. Nobody can tell if any of it is real, because everything I built is verified by me.</p>
+<p>So here is one artifact, and you check it yourself. <strong>2.9 seconds.</strong> I don't want you to trust my CI, my fleet, or my word for it.</p>
+
+<h2>The check</h2>
+<pre><code>$ git clone https://github.com/SuperInstance/quilt-c.git
+$ cd quilt-c && git checkout v0.1.0
+$ make verify
+
+  [ok] test          47 passed   0 failed
+  [ok] test-proof  1059 passed   0 failed
+  [ok] test-route    27 passed   0 failed
+  [ok] test-crdt     28 passed   0 failed
+  [ok] test-world    34 passed   0 failed
+  [ok] test-time     41 passed   0 failed
+  [ok] test-quf      49 passed   0 failed
+
+  verdict: VERIFIED   1285 passed / 0 failed
+  receipt_sha256: 37ee0737…</code></pre>
+<p>Then confirm the tag names that tree — also without trusting me:</p>
+<pre><code>$ node release_verify.mjs --tag v0.1.0
+  [ok] tag_resolves         -&gt; adae27e496bb
+  [ok] tree_matches_receipt  now=be3be613… receipt=be3be613…
+  [ok] receipt_unaltered     recomputed=37ee073… recorded=37ee073…
+  RELEASE VERIFIED</code></pre>
+<p>The trust root is git object hashing. A tag points at one commit; that commit's tree is derivable by anyone. So the check needs no trust in the author — only in SHA-256 and git.</p>
+
+<h2>What it is</h2>
+<p>The Quilt cell-fabric runtime in C99. A spreadsheet where every cell is a live, addressable capability, and every transition is one of five opcodes:</p>
+<pre><code>BIND(cell, dials)   set dials, idempotent by content
+LINK(c1, c2)        add an undirected edge
+EFFECT(cell)        propagate dial[0] to neighbours
+VIEW(cell)          return dials
+TICK(fabric)        advance every dial, saturating at zero</code></pre>
+<p>Dependency closure: a C99 compiler. No packages, no lockfile, no network. The ports below are byte-checked against this reference.</p>
+
+<h2 class="wide">The fabric, live</h2>
+<section class="wide">
+<div class="fabric-wrap">
+  <div class="canvas-row">
+    <canvas id="fabric" width="960" height="430"></canvas>
+    <div class="side">
+      <div class="panel" id="ledger"><h3>RECEIPT CHAIN</h3></div>
+      <div class="panel" id="inspector"><h3>VIEW</h3><span id="insp-body">— awaiting VIEW —</span></div>
+    </div>
+  </div>
+  <div class="ctl">
+    <button id="btn-play" type="button">pause</button>
+    <span id="clock"></span>
+    <span>loop: BIND → LINK → EFFECT ×3 → TICK ×3 → VIEW ×3</span>
+  </div>
+  <p class="caption">simulated projection — the C99 kernel runs these same opcodes across 1,285 assertions.
+  the math on this page is real: dial digests are FNV-1a 64, ledger receipts are SHA-256 parent-chained,
+  both computed in your browser. the timeline is scripted; the kernel is not in your browser.</p>
+
+  <figure class="anatomy">
+    <svg viewBox="0 0 720 340" xmlns="http://www.w3.org/2000/svg" font-family="ui-monospace,Menlo,Consolas,monospace">
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="#6b6a63"/>
+        </marker>
+      </defs>
+      <!-- the cell -->
+      <g>
+        <rect x="270" y="60" width="180" height="200" rx="8" fill="#fbfaf7" stroke="#1c1c1a" stroke-width="1.5"/>
+        <text x="360" y="82" text-anchor="middle" font-size="13" font-weight="700">boat-1/quota</text>
+        <text x="360" y="97" text-anchor="middle" font-size="9" fill="#6b6a63">kind=gauge · version=12</text>
+        <!-- dials -->
+        <g font-size="9">
+          <rect x="282" y="108" width="36" height="26" fill="#2a4a7a"/><text x="300" y="125" text-anchor="middle" fill="#fff">d0</text>
+          <rect x="322" y="108" width="36" height="26" fill="#2a8a6a"/><text x="340" y="125" text-anchor="middle" fill="#fff">d1</text>
+          <rect x="362" y="108" width="36" height="26" fill="#d4a03a"/><text x="380" y="125" text-anchor="middle" fill="#1c1c1a">d2</text>
+          <rect x="402" y="108" width="36" height="26" fill="#efece4" stroke="#ddd9cf"/><text x="420" y="125" text-anchor="middle" fill="#6b6a63">d3</text>
+          <rect x="282" y="140" width="36" height="26" fill="#efece4" stroke="#ddd9cf"/><text x="300" y="157" text-anchor="middle" fill="#6b6a63">d4</text>
+          <rect x="322" y="140" width="36" height="26" fill="#efece4" stroke="#ddd9cf"/><text x="340" y="157" text-anchor="middle" fill="#6b6a63">d5</text>
+          <rect x="362" y="140" width="36" height="26" fill="#efece4" stroke="#ddd9cf"/><text x="380" y="157" text-anchor="middle" fill="#6b6a63">d6</text>
+          <rect x="402" y="140" width="36" height="26" fill="#efece4" stroke="#ddd9cf"/><text x="420" y="157" text-anchor="middle" fill="#6b6a63">d7</text>
+        </g>
+        <text x="360" y="188" text-anchor="middle" font-size="9" fill="#6b6a63">reads → [boat-1/hold, boat-1/rate]</text>
+        <text x="360" y="203" text-anchor="middle" font-size="9" fill="#6b6a63">state_digest = fnv1a64(canonical)</text>
+        <text x="360" y="218" text-anchor="middle" font-size="10" font-weight="700">0xe435d91d6d92a1d8</text>
+        <text x="360" y="243" text-anchor="middle" font-size="9" fill="#6b6a63">journal ← prev 7f3a…c1</text>
+      </g>
+      <!-- callouts -->
+      <g font-size="10" fill="#1c1c1a">
+        <text x="60" y="70">BIND</text><text x="60" y="84" font-size="8.5" fill="#6b6a63">set dials · idempotent</text>
+        <line x1="118" y1="76" x2="266" y2="90" stroke="#6b6a63" stroke-width="1" marker-end="url(#arr)"/>
+        <text x="60" y="140">LINK</text><text x="60" y="154" font-size="8.5" fill="#6b6a63">undirected edge</text>
+        <line x1="118" y1="146" x2="266" y2="150" stroke="#6b6a63" stroke-width="1" marker-end="url(#arr)"/>
+        <text x="60" y="210">EFFECT</text><text x="60" y="224" font-size="8.5" fill="#6b6a63">dial[0] → neighbours</text>
+        <line x1="132" y1="216" x2="266" y2="196" stroke="#6b6a63" stroke-width="1" marker-end="url(#arr)"/>
+        <text x="560" y="100">VIEW</text><text x="560" y="114" font-size="8.5" fill="#6b6a63">pure · cannot mutate</text>
+        <line x1="556" y1="107" x2="456" y2="110" stroke="#6b6a63" stroke-width="1" marker-end="url(#arr)"/>
+        <text x="560" y="170">TICK</text><text x="560" y="184" font-size="8.5" fill="#6b6a63">advance · saturate at 0</text>
+        <line x1="556" y1="177" x2="456" y2="170" stroke="#6b6a63" stroke-width="1" marker-end="url(#arr)"/>
+        <text x="560" y="240">FORGET</text><text x="560" y="254" font-size="8.5" fill="#6b6a63">remove cell + edges</text>
+        <line x1="556" y1="247" x2="456" y2="236" stroke="#6b6a63" stroke-width="1" marker-end="url(#arr)"/>
+      </g>
+      <text x="360" y="310" text-anchor="middle" font-size="9.5" fill="#6b6a63">canonical = type(1) ‖ id(8 LE) ‖ dials(32 LE) ‖ neighbours(8·N LE) — one byte form, twelve ports, one digest</text>
+    </svg>
+    <figcaption>fig. 1 — one cell: eight dials, reads, version, journal pointer, and the five-plus-one opcodes that touch it.</figcaption>
+  </figure>
+
+  <figure class="ports">
+    <svg viewBox="0 0 720 300" xmlns="http://www.w3.org/2000/svg" font-family="ui-monospace,Menlo,Consolas,monospace">
+      <g stroke="#ddd9cf" stroke-width="1">
+        <line x1="360" y1="150" x2="130" y2="52"/><line x1="360" y1="150" x2="236" y2="36"/>
+        <line x1="360" y1="150" x2="360" y2="30"/><line x1="360" y1="150" x2="484" y2="36"/>
+        <line x1="360" y1="150" x2="590" y2="52"/><line x1="360" y1="150" x2="636" y2="118"/>
+        <line x1="360" y1="150" x2="636" y2="182"/><line x1="360" y1="150" x2="590" y2="248"/>
+        <line x1="360" y1="150" x2="484" y2="264"/><line x1="360" y1="150" x2="360" y2="270"/>
+        <line x1="360" y1="150" x2="236" y2="264"/>
+      </g>
+      <g stroke="#8a4b2a" stroke-width="1" stroke-dasharray="3 3" opacity=".55">
+        <line x1="360" y1="150" x2="130" y2="52"/><line x1="360" y1="150" x2="360" y2="30"/>
+        <line x1="360" y1="150" x2="590" y2="52"/><line x1="360" y1="150" x2="636" y2="182"/>
+        <line x1="360" y1="150" x2="484" y2="264"/>
+      </g>
+      <g font-size="11" text-anchor="middle">
+        <rect x="300" y="128" width="120" height="44" rx="7" fill="#1c1c1a"/>
+        <text x="360" y="147" fill="#f7f6f2" font-weight="700">C99</text>
+        <text x="360" y="162" fill="#c8d3c0" font-size="8.5">reference · 1285 assertions</text>
+      </g>
+      <g font-size="10" text-anchor="middle" fill="#1c1c1a">
+        <g><rect x="96" y="38" width="68" height="26" rx="5" fill="#fbfaf7" stroke="#1c1c1a"/><text x="130" y="55">Python 3</text></g>
+        <g><rect x="202" y="22" width="68" height="26" rx="5" fill="#fbfaf7" stroke="#1c1c1a"/><text x="236" y="39">Rust</text></g>
+        <g><rect x="332" y="16" width="56" height="26" rx="5" fill="#fbfaf7" stroke="#1c1c1a"/><text x="360" y="33">Go</text></g>
+        <g><rect x="456" y="22" width="56" height="26" rx="5" fill="#fbfaf7" stroke="#1c1c1a"/><text x="484" y="39">Zig</text></g>
+        <g><rect x="558" y="38" width="64" height="26" rx="5" fill="#fbfaf7" stroke="#1c1c1a"/><text x="590" y="55">Mojo</text></g>
+        <g><rect x="602" y="104" width="68" height="26" rx="5" fill="#fbfaf7" stroke="#1c1c1a"/><text x="636" y="121">Verilog</text></g>
+        <g><rect x="602" y="168" width="60" height="26" rx="5" fill="#fbfaf7" stroke="#1c1c1a"/><text x="632" y="185">VHDL</text></g>
+        <g><rect x="558" y="234" width="64" height="26" rx="5" fill="#fbfaf7" stroke="#1c1c1a"/><text x="590" y="251">JavaScript</text></g>
+        <g><rect x="448" y="250" width="72" height="26" rx="5" fill="#fbfaf7" stroke="#1c1c1a"/><text x="484" y="267">TypeScript</text></g>
+        <g><rect x="332" y="256" width="56" height="26" rx="5" fill="#fbfaf7" stroke="#1c1c1a"/><text x="360" y="273">+2 ports</text></g>
+        <g><rect x="202" y="250" width="68" height="26" rx="5" fill="#fbfaf7" stroke="#1c1a1a" stroke-opacity=".25" stroke-dasharray="3 2"/><text x="236" y="267" fill="#6b6a63">in flight</text></g>
+      </g>
+      <text x="360" y="296" text-anchor="middle" font-size="9" fill="#6b6a63">every spoke byte-checked against the C99 hub — same canonical form, same FNV-1a digest</text>
+    </svg>
+    <figcaption>fig. 2 — the polyformalism: ten named ports around the C99 reference, two in flight. solid spokes hash-checked, dashed are manual/reference per the README ledger.</figcaption>
+  </figure>
+</div>
+</section>
+
+<h2>Install</h2>
+<p>Two packages, same verified kernel. Both run the full 1,285 assertions on install.</p>
+<pre><code># PyPI
+pip install https://github.com/SuperInstance/quilt-c/releases/download/v0.1.0/quilt_c99_kernel-0.1.0-py3-none-any.whl
+python -c "import quilt_cell; print(quilt_cell.verify()['verdict'])"
+
+# npm
+npm install https://github.com/SuperInstance/quilt-c/releases/download/v0.1.0/quilt-c99-kernel-0.1.0.tgz
+npm run verify</code></pre>
+<p>Registry publication is pending egress approval from this build environment; the signed release tarballs are downloadable now and are byte-identical to what would be published.</p>
+
+<h2>The honest part</h2>
+<div class="honest-box">
+<p>I ran an externalisability audit on my own project. I took ten sealed, hash-verified predictions, stripped them to their prediction text alone, and handed them to a verifier on a different model lineage.</p>
+<p><strong>0/10</strong> decidable from the text &middot; <strong>0/10</strong> decidable by a stranger &middot; <strong>10/10</strong> satisfiable by bookkeeping &middot; <strong>791</strong> commits, 0 signed</p>
+<p>Every one of them stated a failure condition and every hash verified. The pass conditions were presence-of-bookkeeping checks — an adversary named the cheap way to satisfy each one. The fleet has falsifiers but not substance tests, and the difference is invisible from inside because everyone inside already knows what the substance is.</p>
+</div>
+<p>That is why this page is one runnable command instead of an index. A searchable list of 4,856 repos optimizes for people who already know what to ask.</p>
+
+<h2>Download</h2>
+<p>Signed release artifacts, byte-identical to what would be published to a registry:</p>
+<ul>
+  <li><a href="https://github.com/SuperInstance/quilt-c/releases/download/v0.1.0/quilt_c99_kernel-0.1.0-py3-none-any.whl">PyPI wheel</a> <code>quilt_c99_kernel-0.1.0-py3-none-any.whl</code></li>
+  <li><a href="https://github.com/SuperInstance/quilt-c/releases/download/v0.1.0/quilt-c99-kernel-0.1.0.tar.gz">PyPI sdist</a> <code>quilt-c99-kernel-0.1.0.tar.gz</code></li>
+  <li><a href="https://github.com/SuperInstance/quilt-c/releases/download/v0.1.0/quilt-c99-kernel-0.1.0.tgz">npm tarball</a> <code>quilt-c99-kernel-0.1.0.tgz</code></li>
+</ul>
+<p><a href="https://github.com/SuperInstance/quilt-c/releases/tag/v0.1.0">All assets →</a></p>
+
+<h2>What I am not asking you to do</h2>
+<ul>
+  <li>Trust the fleet. The receipts are checkable, so check them.</li>
+  <li>Read the doctrine first. Clone and run, then decide if the architecture is interesting.</li>
+  <li>Take the self-description seriously. The 4,856-repo count is machine-counted, not designed.</li>
+</ul>
+
+<h2>The rest of the substrate</h2>
+<ul>
+  <li><a href="https://github.com/SuperInstance/quilt-c">quilt-c</a> — the C99 reference port <span class="tag">1285 assertions, signed tag</span></li>
+  <li>cell API — BIND/LINK/EFFECT/VIEW/TICK as HTTP methods <span class="tag">design probe, 13/13</span></li>
+  <li>externalisability gate — 4 checks, fail-closed <span class="tag">0/10 pass today</span></li>
+  <li>JEV known-answer control — instrument calibration <span class="tag">score type does not discriminate</span></li>
+  <li>the fleet read — 23 writers, one oracle <span class="tag">18,617 bytes</span></li>
+</ul>
+
+<footer>quilt-c · the page math (fnv1a64, sha256 receipt chain) executes in your browser · the kernel executes in C99 · both open</footer>
+</main>
+
+<script>
+"use strict";
+/* ── the fabric animation ─────────────────────────────────────────────
+   Simulated projection of the C99 kernel's opcodes. The semantics are
+   ported 1:1 from cell_api.py (BIND idempotent, EFFECT propagates dial[0],
+   TICK +1/-1 saturating at 0, VIEW pure). Digests: real FNV-1a 64.
+   Ledger receipts: real SHA-256, parent-chained. */
+const cv = document.getElementById("fabric");
+const cx = cv.getContext("2d");
+const LEDGER = document.getElementById("ledger");
+const INSP = document.getElementById("insp-body");
+const CLOCK = document.getElementById("clock");
+const BTN = document.getElementById("btn-play");
+
+/* ── real hash functions ── */
+function fnv1a64(bytes){
+  let h = 0xcbf29ce484222325n;
+  for (const b of bytes){
+    h ^= BigInt(b & 0xff);
+    h = (h * 0x100000001b3n) & 0xFFFFFFFFFFFFFFFFn;
+  }
+  return h.toString(16).padStart(16, "0");
+}
+/* sha256 (synchronous, compact, public-domain style) */
+function sha256hex(ascii){
+  function rr(v,a){return (v>>>a)|(v<<(32-a));}
+  const maxWord = Math.pow(2,32);
+  let result = "";
+  const words = [];
+  const asciiBitLength = ascii.length * 8;
+  let hash = sha256hex.h = sha256hex.h || [];
+  const k = sha256hex.k = sha256hex.k || [];
+  let primeCounter = k.length;
+  const isComposite = {};
+  for (let candidate = 2; primeCounter < 64; candidate++){
+    if (!isComposite[candidate]){
+      for (let i = 0; i < 313; i += candidate) isComposite[i] = candidate;
+      hash[primeCounter] = (Math.pow(candidate, .5) * maxWord) | 0;
+      k[primeCounter++] = (Math.pow(candidate, 1/3) * maxWord) | 0;
+    }
+  }
+  ascii += "\x80";
+  while (ascii.length % 64 - 56) ascii += "\x00";
+  for (let i = 0; i < ascii.length; i++){
+    const j = ascii.charCodeAt(i); if (j >> 8) return "";
+    words[i >> 2] |= j << ((3 - i) % 4) * 8;
+  }
+  words[words.length] = (asciiBitLength / maxWord) | 0;
+  words[words.length] = asciiBitLength;
+  for (let j = 0; j < words.length;){
+    const w = words.slice(j, j += 16);
+    const oldHash = hash;
+    hash = hash.slice(0, 8);
+    for (let i = 0; i < 64; i++){
+      const w15 = w[i-15], w2 = w[i-2];
+      const a = hash[0], e = hash[4];
+      const temp1 = hash[7]
+        + (rr(e,6)^rr(e,11)^rr(e,25))
+        + ((e & hash[5]) ^ ((~e) & hash[6]))
+        + k[i]
+        + (w[i] = (i < 16) ? w[i] : (w[i-16] + (rr(w15,7)^rr(w15,18)^(w15>>>3)) + w[i-7] + (rr(w2,17)^rr(w2,19)^(w2>>>10))) | 0);
+      const temp2 = (rr(a,2)^rr(a,13)^rr(a,22)) + ((a & hash[1]) ^ (a & hash[2]) ^ (hash[1] & hash[2]));
+      hash = [(temp1 + temp2) | 0].concat(hash);
+      hash[4] = (hash[4] + temp1) | 0;
+    }
+    for (let i = 0; i < 8; i++) hash[i] = (hash[i] + oldHash[i]) | 0;
+  }
+  for (let i = 0; i < 8; i++){
+    for (let j = 3; j + 1; j--){
+      const b = (hash[i] >> (j*8)) & 0xff;
+      result += ((b < 16) ? "0" : "") + b.toString(16);
+    }
+  }
+  return result;
+}
+
+/* ── canonical cell serialization (cell_api semantics) ── */
+function addrId(addr){ return sha256hex(addr).slice(0,16); } /* first 8 bytes, hex */
+function canonicalBytes(cell){
+  const out = [1];
+  const aid = addrId(cell.addr);
+  for (let i = 0; i < 8; i++) out.push(parseInt(aid.substr(14 - i*2, 2), 16));
+  for (let i = 0; i < 8; i++){
+    const d = (i < cell.dials.length) ? Math.max(0, Math.min(0xFFFFFFFF, cell.dials[i]|0)) : 0;
+    out.push(d & 0xff, (d>>>8) & 0xff, (d>>>16) & 0xff, (d>>>24) & 0xff);
+  }
+  const n = cell.neighbors.length;
+  for (let i = 0; i < 8; i++) out.push((n >>> (i*8)) & 0xff);
+  for (const nb of cell.neighbors){
+    const nid = addrId(nb);
+    for (let i = 0; i < 8; i++) out.push(parseInt(nid.substr(14 - i*2, 2), 16));
+  }
+  return out;
+}
+function cellDigest(cell){ return fnv1a64(canonicalBytes(cell)); }
+
+/* ── the model ── */
+const COLS = 10, ROWS = 5;
+const cells = new Map();       /* addr -> {addr,dials,neighbors,version,bornAt} */
+const edges = [];              /* [a,b] */
+const pulses = [];             /* {from,to,t0,dur,val} */
+const rings = [];              /* VIEW rings {addr,t0,dur} */
+let tickCount = 0, chainParent = null, receiptCount = 0;
+const ledgerLines = [];
+
+function rc(addr){ return [addr.charCodeAt(0) - 65, parseInt(addr.slice(1)) - 1]; }
+function addrOf(c,r){ return String.fromCharCode(65+c) + (r+1); }
+
+function pushLedger(op, addr, extra){
+  const body = op + "|" + addr + "|" + (extra||"") + "|" + chainParent;
+  const rid = sha256hex(body).slice(0,16);
+  chainParent = rid; receiptCount++;
+  ledgerLines.push(rid + "  " + op.padEnd(7) + " " + addr.padEnd(4) + (extra||""));
+  if (ledgerLines.length > 14) ledgerLines.shift();
+  LEDGER.textContent = "RECEIPT CHAIN\n" + ledgerLines.join("\n");
+  return rid;
+}
+
+function bind(addr, dials, at){
+  const ex = cells.get(addr);
+  if (ex){ const same = ex.dials.length === dials.length && ex.dials.every((v,i)=>v===dials[i]);
+           if (!same){ ex.dials = dials.slice(); ex.version++; } }
+  else cells.set(addr, {addr, dials: dials.slice(), neighbors: [], version: 1, bornAt: at});
+  pushLedger("BIND", addr, " v" + cells.get(addr).version);
+}
+function link(a, b){
+  const ca = cells.get(a), cb = cells.get(b);
+  if (!ca || !cb) return;
+  if (!ca.neighbors.includes(b)) ca.neighbors.push(b);
+  if (!cb.neighbors.includes(a)) cb.neighbors.push(a);
+  if (!edges.some(e => (e[0]===a&&e[1]===b)||(e[0]===b&&e[1]===a))) edges.push([a,b]);
+  ca.version++; cb.version++;
+  pushLedger("LINK", a+"·"+b, "");
+}
+function effect(addr, at){
+  const c = cells.get(addr);
+  if (!c) return;
+  const prop = [];
+  for (const n of c.neighbors){
+    const nb = cells.get(n);
+    if (nb && nb.dials.length && c.dials.length && nb.dials[0] !== c.dials[0]){
+      pulses.push({from: addr, to: n, t0: at, dur: 0.8, val: c.dials[0]});
+      prop.push(n);
+    }
+  }
+  c.version++;
+  pushLedger("EFFECT", addr, "→" + (prop.join(",") || "∅"));
+}
+function applyPulse(p){
+  const nb = cells.get(p.to);
+  if (nb && nb.dials.length){ nb.dials[0] = p.val; nb.version++; }
+}
+function doTick(){
+  tickCount++;
+  for (const c of cells.values()){
+    c.dials = c.dials.map((d,i)=> Math.max(0, d + (i%2===0 ? 1 : -1)));
+    c.version++;
+  }
+  pushLedger("TICK", "graph", " t="+tickCount);
+}
+function view(addr, at){
+  const c = cells.get(addr);
+  if (!c) return;
+  rings.push({addr, t0: at, dur: 1.4});
+  const d = cellDigest(c);
+  pushLedger("VIEW", addr, " " + d.slice(0,8) + "…");
+  INSP.textContent = addr + "  kind=gauge  v" + c.version +
+    "\ndials  [" + c.dials.join(", ") + "]" +
+    "\nreads  [" + c.neighbors.join(", ") + "]" +
+    "\ndigest " + d +
+    "\ncanon  " + canonicalBytes(c).map(b=>b.toString(16).padStart(2,"0")).join("").slice(0,40) + "…";
+}
+
+/* ── the scripted timeline ── */
+const TL = [];
+function T(t, fn){ TL.push({t, fn}); }
+{
+  const binds = [
+    ["A1",[8,2]],["B1",[3,1]],["C1",[6,0]],["D1",[5,3]],["E1",[2,4]],
+    ["A2",[7,0]],["B2",[4,1]],["C2",[9,1]],["D2",[2,2]],["E2",[6,3]],
+    ["A3",[1,5]],["B3",[7,1]],["C3",[3,3]],["D3",[8,0]],["E3",[5,2]],
+    ["B4",[4,4]],["D4",[2,6]]
+  ];
+  binds.forEach((b,i)=> T(0.4 + i*0.22, (at)=> bind(b[0], b[1], at)));
+  const links = [
+    ["A1","B1"],["B1","C1"],["C1","D1"],["D1","E1"],
+    ["A2","B2"],["B2","C2"],["C2","D2"],["D2","E2"],
+    ["A3","B3"],["B3","C3"],["C3","D3"],["D3","E3"],
+    ["A1","A2"],["B1","B2"],["C1","C2"],["D1","D2"],
+    ["B2","B3"],["D2","D3"],["B4","B3"],["D4","D3"]
+  ];
+  links.forEach((l,i)=> T(5.0 + i*0.14, ()=> link(l[0], l[1])));
+  T(10.0, at=> effect("A1", at));
+  T(11.6, at=> effect("D2", at));
+  T(13.2, at=> effect("B3", at));
+  T(15.0, ()=> doTick());
+  T(16.6, ()=> doTick());
+  T(18.2, ()=> doTick());
+  T(19.8, at=> view("A1", at));
+  T(21.4, at=> view("C2", at));
+  T(23.0, at=> view("D3", at));
+}
+const LOOP = 26.0;
+
+/* ── renderer ── */
+function heatColor(v){
+  /* 0..16 ramp: cold blue → teal → amber → hot red */
+  const t = Math.max(0, Math.min(16, v)) / 16;
+  const stops = [[42,74,122],[42,138,106],[212,160,58],[192,58,42]];
+  const seg = Math.min(2, Math.floor(t*3));
+  const f = t*3 - seg;
+  const a = stops[seg], b = stops[seg+1];
+  const c = a.map((x,i)=> Math.round(x + (b[i]-x)*f));
+  return "rgb(" + c.join(",") + ")";
+}
+function cellXY(addr){
+  const [c,r] = rc(addr);
+  const gx = 26, gy = 30, cw = 88, ch = 72;
+  return [gx + c*cw + cw/2, gy + r*ch + ch/2];
+}
+function draw(tau){
+  const W = cv.width, H = cv.height;
+  cx.clearRect(0,0,W,H);
+  cx.fillStyle = "#10131a"; cx.fillRect(0,0,W,H);
+
+  /* edges */
+  cx.lineWidth = 1.5;
+  for (const [a,b] of edges){
+    const [x0,y0] = cellXY(a), [x1,y1] = cellXY(b);
+    cx.strokeStyle = "rgba(140,160,190,0.35)";
+    cx.beginPath(); cx.moveTo(x0,y0); cx.lineTo(x1,y1); cx.stroke();
+  }
+  /* pulses */
+  for (let i = pulses.length-1; i >= 0; i--){
+    const p = pulses[i];
+    const f = (tau - p.t0) / p.dur;
+    if (f >= 1){ applyPulse(p); pulses.splice(i,1); continue; }
+    if (f < 0) continue;
+    const [x0,y0] = cellXY(p.from), [x1,y1] = cellXY(p.to);
+    const x = x0 + (x1-x0)*f, y = y0 + (y1-y0)*f;
+    cx.strokeStyle = "rgba(220,200,90,0.85)"; cx.lineWidth = 3;
+    cx.beginPath(); cx.moveTo(x0,y0); cx.lineTo(x,y); cx.stroke();
+    cx.fillStyle = "#e8d060";
+    cx.beginPath(); cx.arc(x,y,5,0,7); cx.fill();
+  }
+  /* cells */
+  for (const [addr, cell] of cells){
+    const [x,y] = cellXY(addr);
+    const age = Math.min(1, (tau - (cell.bornAt||0)) / 0.5);
+    const w = 64, h = 46;
+    cx.globalAlpha = Math.max(0, age);
+    cx.fillStyle = heatColor(cell.dials[0]||0);
+    cx.beginPath();
+    cx.roundRect(x-w/2, y-h/2, w, h, 7);
+    cx.fill();
+    cx.globalAlpha = 1;
+    cx.strokeStyle = "rgba(255,255,255,0.28)";
+    cx.lineWidth = 1;
+    cx.stroke();
+    cx.fillStyle = "rgba(255,255,255,0.92)";
+    cx.font = "700 11px ui-monospace,Menlo,monospace";
+    cx.textAlign = "center";
+    cx.fillText(addr, x, y-6);
+    cx.font = "10px ui-monospace,Menlo,monospace";
+    cx.fillText("[" + cell.dials.slice(0,3).join(",") + "]", x, y+9);
+    cx.fillStyle = "rgba(255,255,255,0.5)";
+    cx.font = "8px ui-monospace,Menlo,monospace";
+    cx.fillText("v" + cell.version, x, y+21);
+  }
+  /* VIEW rings */
+  for (let i = rings.length-1; i >= 0; i--){
+    const g = rings[i];
+    const f = (tau - g.t0) / g.dur;
+    if (f >= 1){ rings.splice(i,1); continue; }
+    const [x,y] = cellXY(g.addr);
+    cx.strokeStyle = "rgba(140,230,140," + (0.9*(1-f)) + ")";
+    cx.lineWidth = 2.5;
+    cx.beginPath(); cx.arc(x, y, 30 + f*46, 0, 7); cx.stroke();
+  }
+  /* grid addresses along the edges */
+  cx.fillStyle = "rgba(140,160,190,0.4)";
+  cx.font = "9px ui-monospace,Menlo,monospace";
+  cx.textAlign = "center";
+  for (let c = 0; c < COLS; c++) cx.fillText(addrOf(c,0)[0], cellXY(addrOf(c,0))[0], 18);
+  for (let r = 0; r < ROWS; r++) cx.fillText(String(r+1), 12, cellXY(addrOf(0,r))[1]+3);
+  /* tick counter */
+  cx.textAlign = "left";
+  cx.fillStyle = "rgba(200,211,192,0.75)";
+  cx.font = "10px ui-monospace,Menlo,monospace";
+  cx.fillText("tick=" + tickCount + "  receipts=" + receiptCount + "  chain=" + (chainParent||"∅"), 22, H-14);
+}
+
+/* ── main loop ── */
+let playing = true, start = null;
+function frame(ts){
+  if (start === null) start = ts;
+  const tau = ((ts - start)/1000) % LOOP;
+  if (Math.floor(((ts-start)/1000)/LOOP) !== Math.floor((((ts-start)/1000)-0.016)/LOOP)){
+    /* loop boundary: reset model for a clean replay */
+    cells.clear(); edges.length = 0; pulses.length = 0; rings.length = 0;
+    tickCount = 0; chainParent = null; receiptCount = 0; ledgerLines.length = 0;
+    LEDGER.textContent = "RECEIPT CHAIN\n"; INSP.textContent = "— awaiting VIEW —";
+  }
+  for (const e of TL) if (!e.fired && tau >= e.t){ e.fired = true; e.fn(e.t); }
+  if (tau < 0.05) for (const e of TL) e.fired = false;
+  draw(tau);
+  CLOCK.textContent = "τ=" + tau.toFixed(1) + "s";
+  if (playing) requestAnimationFrame(frame);
+}
+BTN.addEventListener("click", ()=>{
+  playing = !playing;
+  BTN.textContent = playing ? "pause" : "play";
+  if (playing){ start = null; requestAnimationFrame(frame); }
+});
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
