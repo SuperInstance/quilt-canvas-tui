@@ -17,6 +17,7 @@
 // Lock: /tmp/canvas-builder.lock (single instance).
 import fs from "node:fs";
 import net from "node:net";
+import { saveRecord } from "./record.mjs"; // portable quilt-record/v1 writer (the SAVE op)
 
 const SOCK = process.env.QUILT_SOCK || "/tmp/quilt-canvas/socks/cudaclaw.sock";
 const QUESTIONS_FILE = "/tmp/canvas-web-questions.jsonl";
