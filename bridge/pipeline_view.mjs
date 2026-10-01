@@ -12,6 +12,7 @@
 // Env:  PIPELINE_HTTP_PORT / PORT (default 8799) · QUILT_SOCK · NO_COLOR
 import http from "node:http";
 import net from "node:net";
+import { pathToFileURL } from "node:url";
 
 const HTTP_PORT = parseInt(process.env.PIPELINE_HTTP_PORT || process.env.PORT || "8799", 10);
 const SOCK = process.env.QUILT_SOCK || "/tmp/quilt-canvas/socks/cudaclaw.sock";
@@ -21,15 +22,25 @@ const POLL_MS = 2000;
 const MAX_PATHS = 64;
 const MAX_LEN = 32;
 
-// ---- port registry (mirrors the browser Pipeline tab's KIND_PORTS semantics) ----
+// ---- port registry (the single place to edit — exported; the browser Pipeline tab
+// in web_projection.mjs imports THIS table so tmux mirror and browser render identically) ----
 // A link is VALID (green) iff source.out-port === target.in-port;
 // MISMATCH (red + badge) when both are known and differ;
 // UNKNOWN (gray, '?') when either cell's kind has no registry entry.
-// Extend as kinds land upstream — this table is the single place to edit.
-const KIND_PORTS = {
-  mic: { in: null, out: "analog-audio" },
-  a2d: { in: "analog-audio", out: "digital-audio" },
-  stt: { in: "digital-audio", out: "text" },
+// Schema: single in-port / out-port per kind; `null` = no port on that side.
+// NOTE: the fabric stores links UNDIRECTED (mutual neighbors, wire order is
+// addr-sorted) — projections orient edges by port flow, not wire order.
+export const KIND_PORTS = {
+  mic:     { in: null,             out: "analog-audio" },
+  a2d:     { in: "analog-audio",   out: "digital-audio" },
+  stt:     { in: "digital-audio",  out: "text" },
+  llm:     { in: "text",           out: "text" },
+  tts:     { in: "text",           out: "digital-audio" },
+  d2a:     { in: "digital-audio",  out: "analog-audio" },
+  speaker: { in: "analog-audio",   out: null },
+  mem:     { in: "text",           out: "text" },
+  net:     { in: "text",           out: "text" },
+  engine:  { in: "text",           out: "text" },
 };
 
 function portsOf(kind) {
@@ -366,4 +377,8 @@ async function main() {
   }, POLL_MS);
 }
 
-main();
+// run the poll/render loop only when executed directly — importing this module
+// (e.g. web_projection.mjs reusing KIND_PORTS) must stay side-effect free
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main();
+}

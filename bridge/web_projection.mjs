@@ -11,6 +11,7 @@ import http from "node:http";
 import net from "node:net";
 import fs from "node:fs";
 import path from "node:path";
+import { KIND_PORTS } from "./pipeline_view.mjs"; // single source of truth — the tmux mirror (pipeline_view.mjs) uses the same table
 
 const SOCK = process.env.QUILT_SOCK || "/tmp/quilt-canvas/socks/cudaclaw.sock";
 const BASE_PORT = parseInt(process.env.PORT || "8799", 10);
@@ -20,22 +21,12 @@ const BOARD_FILE = path.join(import.meta.dirname, "cudaclaw_board.mjs"); // sour
 const QUESTIONS_FILE = "/tmp/canvas-web-questions.jsonl";
 const ANSWERS_FILE = "/tmp/canvas-web-answers.jsonl";
 
-// ---- port registry (PROJECTION-LAYER display semantics only) ----
-// The fabric itself is type-agnostic; this registry exists so humans and agents can
-// read a pipeline. Unknown kinds render as ? → ?. Link validation is visual only:
-// the fabric never rejects a LINK because of port types.
-const KIND_PORTS = {
-  mic:     { in: [],                out: ["audio"] },
-  a2d:     { in: ["audio"],         out: ["digital_audio"] },
-  stt:     { in: ["digital_audio"], out: ["text"] },
-  llm:     { in: ["text"],          out: ["text"] },
-  tts:     { in: ["text"],          out: ["digital_audio"] },
-  d2a:     { in: ["digital_audio"], out: ["analogue_audio"] },
-  speaker: { in: ["analogue_audio"],out: [] },
-  mem:     { in: ["text"],          out: ["text"] },
-  net:     { in: ["text"],          out: ["text"] },
-  engine:  { in: ["text"],          out: ["text"] },
-};
+// ---- port registry: imported from pipeline_view.mjs (see that file for the table) ----
+// PROJECTION-LAYER display semantics only. The fabric itself is type-agnostic and
+// stores links UNDIRECTED (mutual neighbors; wire order is addr-sorted, NOT flow
+// direction) — this projection orients edges by port flow: if exactly one direction
+// satisfies out(src) === in(dst), that is the drawn direction; otherwise wire order.
+// Unknown kinds render as ? → ?. Link validation is visual only.
 
 // ---- authoritative state, rebuilt from every `update` broadcast (never mutated locally) ----
 const state = {
@@ -394,20 +385,30 @@ function page() {
       h += '<div class="bar"><i style="width:' + (d[j] / max * 100).toFixed(1) + '%"></i><u>' + esc(String(d[j])) + '</u></div>';
     return h;
   }
-  // ---- port registry helpers (display-layer validation only) ----
-  function kindKnown(kind) { return Object.prototype.hasOwnProperty.call(KIND_PORTS, kind); }
-  function portsOf(kind) { return kindKnown(kind) ? KIND_PORTS[kind] : { in: ["?"], out: ["?"] }; }
+  // ---- port registry helpers (display-layer validation + orientation only) ----
+  // The fabric stores links UNDIRECTED (wire order is addr-sorted, not flow), so an
+  // edge's drawn direction is projected from port flow: exactly one direction with
+  // out(src) === in(dst) wins; otherwise fall back to wire order.
+  function kindKnown(kind) { return !!KIND_PORTS[String(kind === null || kind === undefined ? "" : kind)]; }
+  function portsOf(kind) { var p = KIND_PORTS[String(kind === null || kind === undefined ? "" : kind)]; return p ? { in: p.in, out: p.out, known: true } : { in: "?", out: "?", known: false }; }
   function portsStr(kind) {
     var p = portsOf(kind);
-    return (p.in.length ? p.in.join("/") : "–") + " → " + (p.out.length ? p.out.join("/") : "–");
+    if (!p.known) return "? → ?";
+    return (p.in === null ? "–" : p.in) + " → " + (p.out === null ? "–" : p.out);
   }
-  function linkInfo(a, b) {
+  function matchTypes(srcKind, dstKind) {
+    var s = KIND_PORTS[srcKind], d = KIND_PORTS[dstKind];
+    return (s.out !== null && s.out === d.in) ? s.out : null;
+  }
+  function orientEdge(a, b) {
     var m = byAddr(); var ca = m[a], cb = m[b];
     var ka = ca ? ca.kind : undefined, kb = cb ? cb.kind : undefined;
-    if (!kindKnown(ka) || !kindKnown(kb)) return { cls: "unk", label: "? → ?" };
-    var po = KIND_PORTS[ka].out, pi = KIND_PORTS[kb].in;
-    for (var i = 0; i < po.length; i++) if (pi.indexOf(po[i]) >= 0) return { cls: "ok", label: po[i] };
-    return { cls: "bad", label: "port mismatch" };
+    if (!kindKnown(ka) || !kindKnown(kb)) return { src: a, dst: b, label: "? → ?", cls: "unk", oriented: false };
+    var fwd = matchTypes(ka, kb), rev = matchTypes(kb, ka);
+    if (fwd && !rev) return { src: a, dst: b, label: fwd, cls: "ok", oriented: true };
+    if (rev && !fwd) return { src: b, dst: a, label: rev, cls: "ok", oriented: true }; // wire order was flow-reversed — project the flow
+    if (fwd && rev) return { src: a, dst: b, label: fwd, cls: "ok", oriented: false }; // both directions legal — wire order
+    return { src: a, dst: b, label: "port mismatch", cls: "bad", oriented: false };
   }
   function byAddr() { var m = {}; if (state) state.cells.forEach(function (c) { m[c.addr] = c; }); return m; }
   function fmtTs(ts) { return new Date(ts).toLocaleTimeString(); }
@@ -430,8 +431,7 @@ function page() {
   function renderSheet() {
     var rows = state.cells.map(function (c) {
       return { c: c, ports: portsStr(c.kind), known: kindKnown(c.kind),
-               outs: state.links.filter(function (l) { return l[0] === c.addr; }),
-               ins: state.links.filter(function (l) { return l[1] === c.addr; }) };
+               wires: state.links.filter(function (l) { return l[0] === c.addr || l[1] === c.addr; }) };
     });
     rows.sort(function (x, y) {
       function val(r) {
@@ -439,14 +439,14 @@ function page() {
           case "kind": return String(r.c.kind || "");
           case "ports": return r.ports;
           case "dials": return JSON.stringify(r.c.dials || []);
-          case "links": return String(r.outs.length);
+          case "links": return String(r.wires.length);
           default: return r.c.addr;
         }
       }
       var vx = val(x), vy = val(y);
       return vx < vy ? -sortDir : vx > vy ? sortDir : 0;
     });
-    var cols = [["addr", "addr"], ["kind", "kind"], ["ports", "ports (in → out)"], ["dials", "dials"], ["links", "links (out)"]];
+    var cols = [["addr", "addr"], ["kind", "kind"], ["ports", "ports (in → out)"], ["dials", "dials"], ["links", "links (flow-oriented)"]];
     var th = "";
     cols.forEach(function (col) {
       var arrow = sortKey === col[0] ? (sortDir > 0 ? " ▲" : " ▼") : "";
@@ -467,11 +467,14 @@ function page() {
       tr.setAttribute("data-addr", r.c.addr);
       if (selected === r.c.addr) tr.className = "sel";
       var lk = "";
-      r.outs.forEach(function (l) {
-        var li = linkInfo(l[0], l[1]);
-        lk += '<span class="lkout ' + li.cls + '">→ ' + esc(l[1]) + (li.cls === "bad" ? '<span class="badge">port mismatch</span>' : '') + '</span>';
+      r.wires.forEach(function (l) {
+        var o = orientEdge(l[0], l[1]); // links are stored undirected — show flow direction relative to this cell
+        var bad = o.cls === "bad" ? '<span class="badge">port mismatch</span>' : '';
+        if (o.src === r.c.addr && o.dst !== r.c.addr) lk += '<span class="lkout ' + o.cls + '">→ ' + esc(o.dst) + bad + '</span>';
+        else if (o.dst === r.c.addr && o.src !== r.c.addr) lk += '<span class="lkout ' + o.cls + '">' + esc(o.src) + ' →</span>';
+        else lk += '<span class="lkout ' + o.cls + '">↔</span>';
       });
-      if (!r.outs.length) lk = '<span class="mut">–</span>';
+      if (!r.wires.length) lk = '<span class="mut">–</span>';
       tr.innerHTML =
         '<td><span class="addr">' + esc(r.c.addr) + '</span></td>' +
         '<td class="kind' + (r.known ? "" : " unk") + '" title="' + (r.known ? "known port semantics" : "unknown kind — ports assumed ? → ?") + '">' +
@@ -487,11 +490,15 @@ function page() {
   // ================= TAB 2: pipeline =================
   function buildChains() {
     var m = byAddr();
-    var outMap = {}, inDeg = {};
+    var outMap = {}, inDeg = {}, seen = {};
     state.cells.forEach(function (c) { outMap[c.addr] = []; inDeg[c.addr] = 0; });
     state.links.forEach(function (l) {
       var a = l[0], b = l[1];
-      if (m[a] && m[b] && a !== b) { outMap[a].push(b); inDeg[b]++; }
+      if (!m[a] || !m[b] || a === b) return;
+      var key = a < b ? a + "|" + b : b + "|" + a;
+      if (seen[key]) return; seen[key] = 1; // fabric keeps pairs unique, but stay defensive
+      var o = orientEdge(a, b);             // orient by port flow, not wire order
+      outMap[o.src].push(o.dst); inDeg[o.dst]++;
     });
     var visited = {}, chains = [];
     function walkChain(start) {
@@ -533,8 +540,8 @@ function page() {
       ch.forEach(function (addr, j) {
         row.innerHTML += pboxHtml(addr);
         if (j < ch.length - 1) {
-          var li = linkInfo(ch[j], ch[j + 1]);
-          var lab = li.cls === "ok" ? esc(li.label) + " →" : li.cls === "bad" ? "✗ " + esc(li.label) + " →" : esc(li.label) + " →";
+          var li = orientEdge(ch[j], ch[j + 1]); // path order follows oriented flow; label = the flowing port
+          var lab = li.cls === "bad" ? "✗ " + esc(li.label) + " →" : esc(li.label) + " →";
           row.innerHTML += '<div class="parr ' + li.cls + '" data-a="' + esc(ch[j]) + '" data-b="' + esc(ch[j + 1]) + '">' + lab + '</div>';
         }
       });
@@ -572,10 +579,10 @@ function page() {
     var ll = $("linklist"); ll.innerHTML = "";
     if (!state.links.length) ll.innerHTML = '<div class="mut">no links</div>';
     state.links.forEach(function (l) {
-      var li = linkInfo(l[0], l[1]);
-      var el = document.createElement("div"); el.className = "lk " + li.cls;
-      el.innerHTML = '<b>' + esc(l[0]) + '</b> → <b>' + esc(l[1]) + '</b>' +
-        '<span class="mut"> ' + esc(li.label) + '</span>' + (li.cls === "bad" ? '<span class="badge">port mismatch</span>' : '');
+      var o = orientEdge(l[0], l[1]);
+      var el = document.createElement("div"); el.className = "lk " + o.cls;
+      el.innerHTML = '<b>' + esc(o.src) + '</b> → <b>' + esc(o.dst) + '</b>' +
+        '<span class="mut"> ' + esc(o.label) + '</span>' + (o.cls === "bad" ? '<span class="badge">port mismatch</span>' : '');
       ll.appendChild(el);
     });
   }
@@ -798,7 +805,7 @@ const server = http.createServer((req, res) => {
   } else if (req.method === "GET" && p === "/ports") {
     json(res, 200, {
       registry: KIND_PORTS,
-      note: "display-layer port semantics only — the fabric is type-agnostic and never rejects a LINK on port types. Unknown kinds render as ? → ?. Link colors: green = endpoint port types match, red = mismatch, gray = unknown kind involved.",
+      note: "display-layer port semantics only — the fabric is type-agnostic, never rejects a LINK on port types, and stores links UNDIRECTED (wire order is addr-sorted, not flow). Projections orient edges by port flow: exactly one direction with out(src)===in(dst) wins, otherwise wire order. Schema: single in/out port per kind, null = no port on that side. Unknown kinds render as ? → ?. Link colors: green = port flow match, red = mismatch, gray = unknown kind involved. Shared table: bridge/pipeline_view.mjs KIND_PORTS.",
     });
   } else if (req.method === "GET" && p === "/events") {
     res.writeHead(200, {
