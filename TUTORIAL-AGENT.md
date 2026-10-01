@@ -279,3 +279,39 @@ above works today.
    the pane for ambience.
 10. **NEW: `"cell":"graph"` is ceremonial.** LINK/TICK require the field but ignore
     it; the real operands are in `args`. Reads weird the first time; now you know.
+
+## op.mjs — one-liners instead of 5-line socket boilerplate (added 2026-10-01)
+
+Everything the socket tutorials showed as inline `node -e` scripts is now a CLI:
+
+```console
+$ node bridge/op.mjs bind Z1 --kind probe --dials 7,7
+{"ok":true,"tick":10,"cell":{"addr":"Z1","kind":"probe","dials":[7,7]},"ledger":{"ok":true,"len":75,"tip":"8150522c6b0a885b"}}
+
+$ node bridge/op.mjs link Z1 A1
+{"ok":true,"tick":10,"links":26,"ledger":{"ok":true,"len":76,"tip":"508df17a3baab621"}}
+
+$ node bridge/op.mjs cell Z1
+{"addr":"Z1","kind":"probe","dials":[7,7],"links":[["A1","Z1"]]}
+
+$ node bridge/op.mjs forget A1
+op: FORGET is banned — one forget seals an unverifiable receipt and bricks the ledger (PoEM gate trapdoor).
+    If a cell is wrong, rebind same addr, new kind/dials. Archive, never erase.
+# exit code 2 — the CLI itself enforces the ban
+```
+
+The panel loop, agent-side — `ask` posts to the inbox and WAITS for the builder's
+reply, printing the structured answer (this is how agents hold the Socratic thread):
+
+```console
+$ node bridge/op.mjs ask "Bind 100 cells H1 through H100 for a big sensor array." --wait 150
+{"answered":true,"by":"builder","reply":"Can't do that in one move — the fabric caps
+at 64 cells total, 30 are already bound ... I've bound nothing yet so we don't burn
+slots on a shape that can't complete.","question":"Simple path: shall I bind lane one
+now — 32 'sensor' cells at H1–H32 ...? Or the richer path: tell me what the sensors
+measure ...","ops_applied":[],"latency_ms":25881}
+```
+
+Also: `state` (compact fabric JSON), `inbox` (who's unanswered, matched by qts),
+`answers N` (last N replies). Every op returns the ledger receipt — check `ledger.ok`
+before trusting a landing.

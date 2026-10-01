@@ -139,7 +139,11 @@ function readJsonl(file) {
 }
 
 function inbox() {
-  const questions = readJsonl(QUESTIONS_FILE).map((q, index) => ({ index, ...q, replies: [] }));
+  // dedupe by ts (re-seeded lines rendered as ghost "unanswered" copies)
+  const seenTs = new Set();
+  const questions = readJsonl(QUESTIONS_FILE)
+    .filter((q) => (seenTs.has(q.ts) ? false : (seenTs.add(q.ts), true)))
+    .map((q, index) => ({ index, ...q, replies: [] }));
   const unmatched = [];
   for (const r of readJsonl(ANSWERS_FILE)) {
     const byTs = questions.find((q) => r.ts === q.ts || r.qts === q.ts || r.question_ts === q.ts);
@@ -843,6 +847,8 @@ const server = http.createServer((req, res) => {
       process.stderr.write(`[web-projection] ask logged: addr=${rec.addr} q=${rec.question.slice(0, 60)}\n`);
       json(res, 200, { ok: true, ts: rec.ts, file: QUESTIONS_FILE, note: "logged for the operator; no fabric op executed" });
     });
+  } else if (req.method === "GET" && p === "/favicon.ico") {
+    res.writeHead(204); res.end(); // browsers always ask; silence the console 404
   } else if (req.method === "GET" && p === "/inbox") {
     json(res, 200, inbox());
   } else {

@@ -78,3 +78,42 @@ Standing session was already up (per task constraints I did not restart it). Fro
 "first socket check" to "last receipt captured": **~2.5 minutes** for flows 1–11.
 Writing the three docs from those receipts: ~3 minutes. The workbench did not make
 the docs faster to *type* — it made them **faster to be true**.
+
+## Playtest 2026-10-01 ~04:00–04:20 UTC — real Chromium via Playwright
+
+Directive: Casey — "playtest it more. can you use playwright or another tool. let's really make this good."
+
+Rig: playwright-core 1.x + ms-playwright chromium-1148, headless, 1440×900. The cached
+browser needed NSS libs; installed without sudo via `apt-get download libnss3 libnspr4`
++ `dpkg -x` into ~/scratch/nss-libs + LD_LIBRARY_PATH (zero system mutation). Rig lives
+in ~/scratch/pw-playtest/ (kept OUT of the repo — the repo stays zero-dep). Script:
+`playtest.mjs` (14 checks: parse/render, tabs, sheet rows+sort, drawer, pipeline chains,
+mismatch badge, grid, composer→live answer), plus focused probes (probe404/probechains/
+probethread). Screenshots: docs/playtest-shots/.
+
+What the REAL browser found that curl-only verification never could:
+
+1. First pass 11/14: client parses+renders (the template-literal `\n` fix holds — 7.6k
+   chars of DOM, zero SyntaxError), claw panel visible, but tab lookups failed — labels
+   are lowercase (`sheet|pipeline|grid` buttons); the test was case-snobby. Test bug.
+2. Ghost "unanswered" ambers: re-seeded duplicate-ts questions rendered as separate
+   unanswered entries → /inbox now dedupes by ts before matching replies.
+3. favicon.ico 404 on every page load → 204 handler; console now clean except nothing.
+4. Oversized plan killed the LLM call at 60s (bind-100-cells ask) → LLM_TIMEOUT_MS 120s,
+   and the system prompt now instructs: oversized ask ⇒ do NOT plan it, reply with a
+   decomposition scope question. Verified: the builder then refused 100 cells flat
+   ("64 cap, 30 bound, 34 free, nothing unbindable — I've bound nothing yet so we don't
+   burn slots on a shape that can't complete") and forked lane-decomposition vs leaner
+   aggregator design. 0 ops burned. 25.9 s. The Socratic contract holds under attack.
+5. op.mjs v1 shipped with an arrow-function syntax error — `node --check` was skipped.
+   Same sin as the K3b lesson, re-learned in front of a live audience. Checked now.
+
+Verified PASS after fixes (fresh Chromium probes, transcripts in git history):
+- chains render: E1→…→E7 (7 cells), F1→…→F7 (7 cells), D1→E8, G3→G2; loose-cell section
+- mismatch badge renders (3 badges incl. deliberate G1→G2 red link); /ports serves registry
+- Sheet: 29 rows; header-click sort reorders (A1 → T1); E4 row click opens detail drawer
+- LIVE LOOP IN-BROWSER: composer question → builder bound E10 `zeroclaw` engine, linked
+  E4, verified:true, ledger receipts per op → reply rendered in thread. Final thread:
+  11 operator replies, 10 user msgs, **0 awaiting**.
+- op.mjs live fire: state/bind/link/cell land with ledger receipts; `forget` refuses
+  with the PoEM-trapdoor message, exit 2.

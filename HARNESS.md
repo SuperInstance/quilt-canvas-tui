@@ -222,3 +222,15 @@ the browser; the wire format never changes to suit a display.
    `/tmp/quilt-c` (`cell_api.py`) — not present in this environment, and `quilt-c` is not
    on PyPI. It is a cross-language byte-match pin, not a bridge defect; all controller/
    socket/fabric behavior tests pass. `test_chiaroscuro.mjs` is 6/6.
+
+## op.mjs — the one-liner client (2026-10-01)
+
+`node bridge/op.mjs <cmd>` — bind/link/tick/view/state/cell/ask/inbox/answers; `forget`
+always refuses (exit 2, PoEM ban enforced at the CLI). Uses the unix socket directly
+(QUILT_SOCK env overrides); `ask` writes the questions jsonl and polls answers for its
+qts — no web-server dependency. Prefer it over hand-rolled `node -e` socket scripts.
+
+### /state.json exact shape (top-level keys — a real agent tripped on this)
+`{sock, connected, tick, ledger:{ok,len,tip}, cells:[{addr,kind,dials}], links:[[a,b]…], updated_at}`
+Cells and links are TOP-LEVEL — there is no `.state` wrapper. Ledger tip is a hex string
+(receipt chain head); `ledger.ok:false` means unverified — do not build on it.

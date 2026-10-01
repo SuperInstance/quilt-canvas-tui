@@ -30,7 +30,7 @@ const POLL_MS = 1000;
 const MAX_CELLS = 64;
 const MAX_OPS_PER_TURN = 32;
 const OP_TIMEOUT_MS = 5000;
-const LLM_TIMEOUT_MS = 60000;
+const LLM_TIMEOUT_MS = 120000;
 const ALLOWED_OPS = new Set(["bind", "link", "tick"]);
 const ADDR_RE = /^[A-Z][0-9]{1,2}$/;
 
@@ -336,6 +336,7 @@ Ops are executed in order. Op forms:
 HARD CONSTRAINTS (violations are silently skipped and reported honestly in your reply):
 - Only bind / link / tick are allowed. FORGET is banned forever: one FORGET seals an unverifiable receipt and permanently bricks the ledger (PoEM gate trapdoor).
 - addr must match ^[A-Z][0-9]{1,2}$ ; max 64 cells total ; dials numeric, max 8 entries ; both link endpoints must already be bound.
+- If a request would exceed these caps (e.g. "bind 100 cells"), DO NOT plan the whole thing — reply explaining the cap and ask a scope question proposing a decomposition into lanes of at most 32 ops per turn.
 
 CURRENT FABRIC STATE (live, fetched just now):
 ${JSON.stringify(state)}
