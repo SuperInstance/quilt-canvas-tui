@@ -235,6 +235,13 @@ When the files exist, the contract is: read JSONL lines from
 one JSON object per line. Until then this section is honestly a stub — everything
 above works today.
 
+> **ADDENDUM, 18:56 AKDT:** `bridge/web_projection.mjs` landed in the repo and went
+> live while this doc was being written — `curl http://localhost:8799` now returns
+> **200** (was 000 at 18:51). It is a socket *peer* (`ready`-only, never mutates).
+> The questions/answers inbox files still do not exist, so the inbox contract above
+> remains unverified — do not claim it works until you can show a real
+> question→answer pair.
+
 ## FAIL-first checklist (before you claim "workbench is up")
 
 1. `tmux ls` shows `canvas-ctl` with windows `ctl`, `board`, `view`.

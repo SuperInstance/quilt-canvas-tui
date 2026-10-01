@@ -68,6 +68,13 @@ $ curl -s -m 2 http://localhost:8799 -o /dev/null -w "%{http_code}\n"
 (`000` = nothing answered the door.) When it lands, this section gets its screenshots.
 Everything else in this tutorial works right now.
 
+> **ADDENDUM, 18:56 AKDT, minutes after this doc was written:** the projection just
+> landed — `http://localhost:8799` now answers **200** (we re-checked, honestly).
+> The side-panel question inbox (`/tmp/canvas-web-questions.jsonl`) is still not up,
+> so questions-by-web waits; the browser quilt itself is live. The section above is
+> kept as-written — it's the honest record of a workbench being born while its
+> manual was being typed.
+
 ## Your 5-minute guided tour
 
 Exactly what to type, and what you'll see. (Times from an actual run: the whole tour
