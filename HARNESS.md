@@ -152,7 +152,12 @@ Sample capture (80×24):
 5. **Flood discipline**: the controller broadcasts to *all* clients per opcode. A probe
    that re-sends or spin-reads will light up every pane at once. Send once, read once,
    exit.
-6. **test_bridge.mjs 9/10**: the failing subtest needs the quilt-c python kernel at
+6. **Viewer version counters inflate locally**: each broadcast carries the full links
+   list, and `fabric._link()` bumps both endpoints' versions unconditionally even when
+   the edge already exists. A canvas that has been merging updates for a while shows
+   higher `vN` than the controller's fabric. The controller log is authoritative;
+   dial values stay correct.
+7. **test_bridge.mjs 9/10**: the failing subtest needs the quilt-c python kernel at
    `/tmp/quilt-c` (`cell_api.py`) — not present in this environment, and `quilt-c` is not
    on PyPI. It is a cross-language byte-match pin, not a bridge defect; all controller/
    socket/fabric behavior tests pass. `test_chiaroscuro.mjs` is 6/6.
