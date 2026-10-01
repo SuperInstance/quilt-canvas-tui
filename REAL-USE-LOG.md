@@ -117,3 +117,17 @@ Verified PASS after fixes (fresh Chromium probes, transcripts in git history):
   11 operator replies, 10 user msgs, **0 awaiting**.
 - op.mjs live fire: state/bind/link/cell land with ledger receipts; `forget` refuses
   with the PoEM-trapdoor message, exit 2.
+
+## Record lane (quilt-record/v1) — 2026-10-01 ~04:25 AKDT
+- save full/hint, since-cursor (lucineer), load dry-run (30/30 same on a fresh record), brief — all live-verified.
+- Two bugs caught by the round-trip itself: (1) same-second saves collided — the hint save
+  OVERWROTE the full record's dir (stamp was second-granularity) → dirs now carry the tier
+  (`quilt-<ts>-<tier>`); (2) loadPlan crashed on hint-tier input (`undefined.cells`) instead
+  of failing loud → now refuses with "load needs a full-tier record". Both fixed in d4f1805.
+- Third bug in the mixer mission: the builder executed save with `saveRecord is not defined`
+  — I shipped the whitelist/validator/executor but FORGOT THE IMPORT. The receipt caught it
+  (`ok:false` in ops_applied, honest), fix in 9eac277, re-ask verified end-to-end.
+- The builder's own honesty in the mixer mission: flagged that F6↔F7 stays linked (no unlink
+  primitive — FORGET ban covers edges too) so audio can bypass M1. UNLINK-op design question
+  sent to Casey (my lean: receipted edge-removal, cells still immutable).
+- First portable records committed under records/ (full + gist + the builder's own gist).
