@@ -135,6 +135,67 @@ Sample capture (80×24):
  [4,13242,*[3]       []
 ```
 
+## Web projection (added 2026-09-30)
+
+`bridge/web_projection.mjs` — the same quilt in a browser: a zero-dep (node stdlib only)
+**read-only peer** of the fabric. It connects to the controller socket, sends `ready`
+once, and **never writes an opcode** — the display layer cannot mutate the fabric, by
+construction. Every backend op is surfaced as an explicit copy-paste chip instead.
+
+```bash
+tmux kill-window -t canvas-ctl:web 2>/dev/null
+tmux new-window -t canvas-ctl -n web "cd /home/eileen/projects/quilt-canvas-tui && \
+  node bridge/web_projection.mjs 2>&1 | tee /tmp/canvas-web.log"   # http://localhost:8799
+```
+
+(Env: `PORT` overrides 8799, falls back 8800-8810 if busy and says which; `QUILT_SOCK`
+overrides the socket. FAIL-first: missing socket file at startup = loud exit 1.)
+
+### Endpoints
+
+| endpoint | what |
+|---|---|
+| `GET /` | single-page UI (inline HTML/CSS/JS, no CDN): cell grid, links, tick + ledger tip header, live via SSE |
+| `GET /events` | `text/event-stream`; initial snapshot on connect, then one frame per controller broadcast |
+| `GET /state.json` | full current state — the agent-verification view of what the browser sees |
+| `GET /cell/<addr>` | `{addr, kind, dials, source_path, source_excerpt}` — scans `cudaclaw_board.mjs` for a quoted-literal bind/link line for that addr (±2 lines). Honest fallback: `source_excerpt: null` + `reason: "no bind line found"` (A5 hits: `const SUMMARY_ADDR = "A5"`; shell-bound cells like B9 honestly miss — the board binds A1..A4 via template literals, not per-addr literals) |
+| `POST /ask` | `{addr, question}` → appends `{ts, addr, question, answered:false}` to `/tmp/canvas-web-questions.jsonl`. **Never executes a fabric op.** |
+| `GET /inbox` | questions joined with operator replies from `/tmp/canvas-web-answers.jsonl` |
+
+### The ask/inbox flow (captain's non-interrupting channel)
+
+The captain clicks a cell, types a question, hits ask — it lands in the questions file
+and the UI polls it; no fabric op, no pane interruption. The **operator** answers by
+echoing into the answers file, matched to the question by `ts` (or 0-based `index`):
+
+```bash
+echo '{"ts":<question ts>,"reply":"your answer"}' >> /tmp/canvas-web-answers.jsonl
+```
+
+Replies that match nothing show up under `unmatched_replies` instead of vanishing.
+
+### The chips principle (display vs engineering decoupling)
+
+Actions that need backend ops render as dashed chips: *"needs backend change — copy
+this command"*. Clicking copies the **exact** NDJSON one-liner (the HARNESS gotcha-#2
+pattern: `echo '{...opcode...}' | timeout 2 node -e '…'` piped at the socket). Nothing
+auto-executes; the browser never touches the socket; the human decides when a command
+runs in a shell. No FORGET chip is offered on purpose — see gotcha #3.
+
+### Presentation toggle
+
+raw / decoded / bars — pure client-side re-projection of the same state, no server
+round-trip. Decoded knows the spool semantics: `dials = [turns, round(tok_s*100),
+round(spool_ms/10)]`, so dial[1]/100 = tok/s and dial[2]×10 = ms spool. State stays in
+the browser; the wire format never changes to suit a display.
+
+### Verified live (2026-09-30, all on the running workbench)
+
+- `state.json` before/after a shell BIND of `B9` (`{"dials":[9,900,90],"kind":"web-projection-test"}`): 7 cells → 8 cells, B9 present, ledger ok, tip advanced `f096e385…` → `e451ab69…`.
+- `curl -sN --max-time 4 /events` captured 2 SSE frames: the hello snapshot and the B9 broadcast — streaming proven without polling.
+- `POST /ask` (`B9`: "who bound you…") → ts `1790823302391`; operator echo into `/tmp/canvas-web-answers.jsonl` with that ts → `GET /inbox` shows `answered: true` with the reply attached, `unmatched_replies: []`.
+- B9 stays bound: it is receipted and harmless, and FORGET would brick the ledger (gotcha #3).
+
 ## Gotchas (all hit live)
 
 1. **tmux window cwd**: `new-window` inherits the *caller's* cwd, not the session's first
