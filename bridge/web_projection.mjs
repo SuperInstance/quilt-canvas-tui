@@ -4,6 +4,8 @@
 // PEER, never a mutator: this process only sends `ready` on the socket — every
 // backend op is surfaced as an explicit copy-paste chip, nothing auto-executes.
 // Zero npm deps (node stdlib only).
+// Two-panel workbench: LEFT "claw session" (agent chat thread + composer),
+// RIGHT superinstance view with sheet / pipeline / grid tabs.
 // Run: PORT=8799 QUILT_SOCK=/tmp/quilt-canvas/socks/cudaclaw.sock node bridge/web_projection.mjs
 import http from "node:http";
 import net from "node:net";
@@ -17,6 +19,23 @@ const FALLBACK_PORTS = [BASE_PORT, 8800, 8801, 8802, 8803, 8804, 8805, 8806, 880
 const BOARD_FILE = path.join(import.meta.dirname, "cudaclaw_board.mjs"); // source-of-truth scan target
 const QUESTIONS_FILE = "/tmp/canvas-web-questions.jsonl";
 const ANSWERS_FILE = "/tmp/canvas-web-answers.jsonl";
+
+// ---- port registry (PROJECTION-LAYER display semantics only) ----
+// The fabric itself is type-agnostic; this registry exists so humans and agents can
+// read a pipeline. Unknown kinds render as ? → ?. Link validation is visual only:
+// the fabric never rejects a LINK because of port types.
+const KIND_PORTS = {
+  mic:     { in: [],                out: ["audio"] },
+  a2d:     { in: ["audio"],         out: ["digital_audio"] },
+  stt:     { in: ["digital_audio"], out: ["text"] },
+  llm:     { in: ["text"],          out: ["text"] },
+  tts:     { in: ["text"],          out: ["digital_audio"] },
+  d2a:     { in: ["digital_audio"], out: ["analogue_audio"] },
+  speaker: { in: ["analogue_audio"],out: [] },
+  mem:     { in: ["text"],          out: ["text"] },
+  net:     { in: ["text"],          out: ["text"] },
+  engine:  { in: ["text"],          out: ["text"] },
+};
 
 // ---- authoritative state, rebuilt from every `update` broadcast (never mutated locally) ----
 const state = {
@@ -167,27 +186,106 @@ setInterval(() => { for (const c of sseClients) { try { c.write(`: hb\n\n`); } c
 
 function page() {
   const sockJson = JSON.stringify(SOCK);
+  const portsJson = JSON.stringify(KIND_PORTS);
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Quilt — web projection (cudaclaw)</title>
+<title>Quilt — two-panel workbench (cudaclaw)</title>
 <style>
   :root { --bg:#0d1117; --panel:#161b22; --edge:#30363d; --ink:#c9d1d9; --dim:#8b949e;
-          --acc:#58a6ff; --ok:#3fb950; --warn:#d29922; --chip:#21262d; }
+          --acc:#58a6ff; --ok:#3fb950; --warn:#d29922; --bad:#f85149; --chip:#21262d; }
   * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.45 ui-monospace,Menlo,Consolas,monospace; }
-  header { display:flex; flex-wrap:wrap; gap:10px 22px; align-items:baseline; padding:12px 16px;
-           border-bottom:1px solid var(--edge); background:var(--panel); }
+  html, body { height:100%; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.45 ui-monospace,Menlo,Consolas,monospace;
+         display:flex; flex-direction:column; overflow:hidden; }
+  header { display:flex; flex-wrap:wrap; gap:10px 22px; align-items:baseline; padding:10px 16px;
+           border-bottom:1px solid var(--edge); background:var(--panel); flex:0 0 auto; }
   header h1 { font-size:15px; margin:0; color:var(--acc); }
   .kv { color:var(--dim); } .kv b { color:var(--ink); font-weight:600; }
   #dot { display:inline-block; width:9px; height:9px; border-radius:50%; background:var(--warn); margin-right:5px; }
   #dot.on { background:var(--ok); }
-  .banner { padding:8px 16px; background:#202a3a; border-bottom:1px solid var(--edge); color:#a5c8ff; }
-  .modes { padding:8px 16px; display:flex; gap:8px; align-items:center; color:var(--dim); }
+  .banner { padding:7px 16px; background:#202a3a; border-bottom:1px solid var(--edge); color:#a5c8ff; flex:0 0 auto; }
+  .modes { padding:6px 16px; display:flex; gap:8px; align-items:center; color:var(--dim);
+           border-bottom:1px solid var(--edge); flex:0 0 auto; }
   .modes button { background:var(--chip); color:var(--ink); border:1px solid var(--edge); border-radius:6px;
-                  padding:4px 12px; cursor:pointer; font:inherit; }
+                  padding:3px 12px; cursor:pointer; font:inherit; }
   .modes button.on { border-color:var(--acc); color:var(--acc); }
-  main { display:flex; gap:16px; padding:16px; align-items:flex-start; flex-wrap:wrap; }
+  main { flex:1; min-height:0; display:flex; }
+  /* ---------- LEFT: claw session ---------- */
+  #claw { flex:0 0 400px; min-width:320px; display:flex; flex-direction:column; min-height:0;
+          border-right:1px solid var(--edge); background:#10151c; }
+  #claw h2, .tabs h2 { font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:var(--dim); margin:0; }
+  #claw > h2 { padding:10px 14px; border-bottom:1px solid var(--edge); }
+  #thread { flex:1; overflow-y:auto; padding:12px 14px; }
+  .msg { margin:0 0 12px; }
+  .msg .from { font-weight:700; margin-right:8px; }
+  .msg.user .from { color:var(--acc); }
+  .msg.op .from.builder { color:var(--ok); }
+  .msg.op .from.lucineer { color:var(--acc); }
+  .msg.op .from.operator { color:var(--dim); }
+  .msg .t { font-size:11px; }
+  .msg .body { margin-top:3px; white-space:pre-wrap; word-break:break-word; }
+  .msg.user { border-left:2px solid var(--acc); padding:2px 0 2px 10px; }
+  .msg.user.await { border-left-color:var(--warn); background:#d299220d; }
+  .msg.op { border-left:2px solid var(--ok); padding:2px 0 2px 10px; }
+  .awaiting { color:var(--warn); font-size:11px; margin-top:4px; }
+  .qref { font-size:11px; margin-top:3px; }
+  .opchip { display:inline-block; background:var(--chip); border:1px dashed var(--warn); border-radius:10px;
+            padding:1px 8px; font-size:11px; margin:6px 6px 0 0; cursor:pointer; color:var(--ink); }
+  .opchip:hover { border-color:var(--acc); color:var(--acc); }
+  .mut { color:var(--dim); }
+  .empty { margin-top:20px; }
+  #composer { border-top:1px solid var(--edge); padding:10px 14px; flex:0 0 auto; }
+  textarea { width:100%; background:#0a0d12; color:var(--ink); border:1px solid var(--edge);
+             border-radius:6px; padding:8px; font:inherit; min-height:56px; resize:vertical; }
+  .crow { margin-top:6px; display:flex; gap:10px; align-items:center; }
+  button.act { background:var(--chip); color:var(--ink); border:1px solid var(--edge); border-radius:6px;
+               padding:5px 14px; cursor:pointer; font:inherit; }
+  button.act:hover { border-color:var(--acc); }
+  /* ---------- RIGHT: superinstance view ---------- */
+  #super { flex:1; min-width:0; display:flex; flex-direction:column; min-height:0; }
+  .tabs { display:flex; gap:8px; align-items:center; padding:8px 16px; border-bottom:1px solid var(--edge);
+          flex:0 0 auto; background:var(--panel); }
+  .tabs button { background:var(--chip); color:var(--ink); border:1px solid var(--edge); border-radius:6px;
+                 padding:4px 16px; cursor:pointer; font:inherit; }
+  .tabs button.on { border-color:var(--acc); color:var(--acc); }
+  .tabs .mut { margin-left:auto; font-size:11px; }
+  .tab { display:none; flex:1; min-height:0; overflow:auto; padding:16px; }
+  .tab.on { display:block; }
+  .hl { outline:2px solid var(--warn) !important; box-shadow:0 0 12px #d2992244; }
+  /* sheet */
+  #sheet { border-collapse:collapse; }
+  #sheet th, #sheet td { border:1px solid var(--edge); padding:6px 10px; text-align:left; vertical-align:top; }
+  #sheet th { background:var(--panel); cursor:pointer; user-select:none; color:var(--dim);
+              position:sticky; top:-16px; white-space:nowrap; }
+  #sheet th:hover { color:var(--acc); }
+  #sheet tbody tr { cursor:pointer; }
+  #sheet tbody tr:hover { background:#1a2129; }
+  #sheet tbody tr.sel { outline:1px solid var(--acc); }
+  #sheet .addr { color:var(--acc); font-weight:700; }
+  #sheet td.ports.unk, #sheet td.kind.unk { color:var(--dim); }
+  #sheet .lkout { white-space:nowrap; margin-right:8px; }
+  .lk.ok, .parr.ok, .arrow.ok { color:var(--ok); }
+  .lk.bad, .parr.bad, .arrow.bad { color:var(--bad); }
+  .lk.unk, .parr.unk, .arrow.unk { color:var(--dim); }
+  .badge { color:var(--bad); border:1px solid var(--bad); border-radius:3px; font-size:10px;
+           padding:0 4px; margin-left:6px; white-space:nowrap; }
+  /* pipeline */
+  .chainlabel { color:var(--dim); font-size:11px; text-transform:uppercase; letter-spacing:.06em; margin:0 0 6px; }
+  .chain { display:flex; align-items:center; flex-wrap:wrap; gap:6px; margin:0 0 20px; }
+  .pbox { background:var(--panel); border:1px solid var(--edge); border-radius:8px; padding:8px 10px;
+          min-width:140px; cursor:pointer; }
+  .pbox:hover { border-color:var(--acc); }
+  .pbox .addr { color:var(--acc); font-weight:700; }
+  .pbox .kind { color:var(--dim); font-size:11px; margin-left:6px; }
+  .pports { font-size:11px; color:var(--dim); margin-top:3px; }
+  .pdials { margin-top:5px; font-size:12px; white-space:pre-wrap; word-break:break-all; max-width:220px; }
+  .parr { font-size:11px; padding:3px 6px; border-radius:4px; border:1px solid transparent; }
+  .parr.bad { border-color:#f8514966; background:#f8514911; }
+  .loose { display:flex; flex-wrap:wrap; gap:8px; }
+  .loose .pbox { min-width:120px; }
+  /* grid tab */
+  #gridwrap { display:flex; gap:16px; align-items:flex-start; flex-wrap:wrap; }
   #grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); gap:10px; flex:2 1 480px; }
   .cell { background:var(--panel); border:1px solid var(--edge); border-radius:8px; padding:10px; cursor:pointer; }
   .cell:hover { border-color:var(--acc); }
@@ -197,38 +295,35 @@ function page() {
   .bar { height:8px; background:#1f6feb33; border-radius:2px; margin:3px 0; position:relative; }
   .bar i { position:absolute; inset:0 auto 0 0; background:#58a6ff; border-radius:2px; }
   .bar u { position:absolute; right:4px; top:-2px; font-size:10px; color:var(--dim); text-decoration:none; }
-  #links { flex:1 1 220px; background:var(--panel); border:1px solid var(--edge); border-radius:8px; padding:10px; }
-  #links h2, #panel h2 { font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:var(--dim); margin:0 0 8px; }
-  .lk { padding:2px 0; color:var(--dim); } .lk b { color:var(--ink); }
-  #panel { display:none; flex:1 1 340px; background:var(--panel); border:1px solid var(--edge);
-           border-radius:8px; padding:12px; position:sticky; top:12px; max-width:460px; }
+  #linksbox { flex:1 1 220px; background:var(--panel); border:1px solid var(--edge); border-radius:8px; padding:10px; }
+  #linksbox h2, #panel h2 { font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:var(--dim); margin:0 0 8px; }
+  .lk { padding:2px 0; } .lk b { color:var(--ink); }
+  /* cell detail drawer */
+  #panel { display:none; flex:0 0 auto; max-height:46%; overflow:auto; background:var(--panel);
+           border-top:1px solid var(--edge); padding:12px 16px; }
   #panel .row { margin:8px 0; }
-  .mut { color:var(--dim); }
+  .addr { color:var(--acc); font-weight:700; }
   pre.src { background:#0a0d12; border:1px solid var(--edge); border-radius:6px; padding:8px;
             overflow-x:auto; font-size:12px; white-space:pre-wrap; }
-  textarea { width:100%; background:#0a0d12; color:var(--ink); border:1px solid var(--edge);
-             border-radius:6px; padding:8px; font:inherit; min-height:64px; }
-  button.act { background:var(--chip); color:var(--ink); border:1px solid var(--edge); border-radius:6px;
-               padding:5px 14px; cursor:pointer; font:inherit; }
-  button.act:hover { border-color:var(--acc); }
   .chip { background:var(--chip); border:1px dashed var(--warn); border-radius:6px; padding:8px; margin:8px 0; cursor:pointer; }
   .chip:hover { border-color:var(--acc); }
   .chip .tag { color:var(--warn); font-size:11px; text-transform:uppercase; letter-spacing:.06em; }
   .chip .cmd { color:var(--ink); font-size:11px; word-break:break-all; margin-top:4px; }
   .chip.copied { border-color:var(--ok); } .chip.copied .tag { color:var(--ok); }
   .reply { border-left:2px solid var(--ok); padding:4px 8px; margin:6px 0; }
-  .reply .mut { font-size:11px; }
   select { background:#0a0d12; color:var(--ink); border:1px solid var(--edge); border-radius:6px; padding:4px; font:inherit; }
+  .x { float:right; padding:0 8px; }
 </style></head><body>
 <header>
-  <h1>quilt · web projection</h1>
+  <h1>quilt · two-panel workbench</h1>
   <span class="kv"><span id="dot"></span><b id="conn">connecting…</b></span>
   <span class="kv">tick <b id="tick">–</b></span>
   <span class="kv">ledger <b id="ledger">–</b></span>
   <span class="kv">tip <b id="tip">–</b></span>
   <span class="kv">cells <b id="ncells">0</b></span>
+  <span class="kv">links <b id="nlinks">0</b></span>
 </header>
-<div class="banner">Display layer — this panel cannot change the fabric. Backend ops show as explicit commands below.</div>
+<div class="banner">Display layer — this panel cannot change the fabric. Backend ops show as explicit copy-paste commands in the cell drawer.</div>
 <div class="modes">presentation:
   <button id="m-raw" class="on">raw</button>
   <button id="m-dec">decoded</button>
@@ -236,26 +331,51 @@ function page() {
   <span class="mut">(client-side re-projection only — state stays in your browser)</span>
 </div>
 <main>
-  <div id="grid"></div>
-  <div id="links"><h2>links</h2><div id="linklist"></div></div>
-  <div id="panel">
-    <h2>cell detail</h2>
-    <div class="row"><span class="addr" id="p-addr"></span> <span class="mut" id="p-kind"></span></div>
-    <div class="row" id="p-dials"></div>
-    <div class="row"><div class="mut">source (scanned from the board file):</div><pre class="src" id="p-src"></pre></div>
-    <div class="row"><div class="mut">ask the operator (never executes a fabric op):</div>
-      <textarea id="p-q" placeholder="question about this cell…"></textarea>
-      <div><button class="act" id="p-ask">ask</button> <span class="mut" id="p-askmsg"></span></div></div>
-    <div class="row"><h2>replies</h2><div id="p-replies" class="mut">none yet — the operator answers via /tmp/canvas-web-answers.jsonl</div></div>
-    <div class="row"><h2>needs a backend change?</h2>
-      <div class="mut">click to copy the exact command. nothing here auto-executes.</div>
-      <div id="p-chips"></div></div>
-  </div>
+  <section id="claw">
+    <h2>claw session</h2>
+    <div id="thread"><div class="mut empty">loading thread…</div></div>
+    <div id="composer">
+      <textarea id="q" placeholder="tell the agent what to build…"></textarea>
+      <div class="crow"><button class="act" id="send">send</button>
+        <span class="mut" id="sendmsg">goes to /tmp/canvas-web-questions.jsonl — no fabric op is executed</span></div>
+    </div>
+  </section>
+  <section id="super">
+    <div class="tabs">
+      <button id="t-sheet" class="on" data-tab="sheet">sheet</button>
+      <button id="t-pipeline" data-tab="pipeline">pipeline</button>
+      <button id="t-grid" data-tab="grid">grid</button>
+      <span class="mut">live via SSE · port validation is display-only</span>
+    </div>
+    <div id="tab-sheet" class="tab on"><table id="sheet"><thead></thead><tbody></tbody></table></div>
+    <div id="tab-pipeline" class="tab"><div id="chains"></div></div>
+    <div id="tab-grid" class="tab">
+      <div id="gridwrap">
+        <div id="grid"></div>
+        <div id="linksbox"><h2>links</h2><div id="linklist"></div></div>
+      </div>
+    </div>
+    <div id="panel">
+      <h2>cell detail <button class="act x" id="p-close" title="close">×</button></h2>
+      <div class="row"><span class="addr" id="p-addr"></span> <span class="mut" id="p-kind"></span>
+        <span class="mut" id="p-ports"></span></div>
+      <div class="row" id="p-dials"></div>
+      <div class="row"><div class="mut">source (scanned from the board file):</div><pre class="src" id="p-src"></pre></div>
+      <div class="row"><div class="mut">ask about this cell (never executes a fabric op):</div>
+        <textarea id="p-q" placeholder="question about this cell…"></textarea>
+        <div><button class="act" id="p-ask">ask</button> <span class="mut" id="p-askmsg"></span></div></div>
+      <div class="row"><h2>needs a backend change?</h2>
+        <div class="mut">click to copy the exact command. nothing here auto-executes.</div>
+        <div id="p-chips"></div></div>
+    </div>
+  </section>
 </main>
 <script>
 (function () {
-  var SOCK = __SOCK__;
-  var state = null, mode = "raw", selected = null;
+  var SOCK = ${sockJson};
+  var KIND_PORTS = ${portsJson};
+  var state = null, mode = "raw", selected = null, tab = "sheet";
+  var sortKey = "addr", sortDir = 1;
   function $(id) { return document.getElementById(id); }
   function esc(s) { var d = document.createElement("div"); d.textContent = String(s); return d.innerHTML; }
   function isSpool(kind) { return typeof kind === "string" && (kind.indexOf("spool:") === 0 || kind === "cudaclaw-board"); }
@@ -274,16 +394,176 @@ function page() {
       h += '<div class="bar"><i style="width:' + (d[j] / max * 100).toFixed(1) + '%"></i><u>' + esc(String(d[j])) + '</u></div>';
     return h;
   }
+  // ---- port registry helpers (display-layer validation only) ----
+  function kindKnown(kind) { return Object.prototype.hasOwnProperty.call(KIND_PORTS, kind); }
+  function portsOf(kind) { return kindKnown(kind) ? KIND_PORTS[kind] : { in: ["?"], out: ["?"] }; }
+  function portsStr(kind) {
+    var p = portsOf(kind);
+    return (p.in.length ? p.in.join("/") : "–") + " → " + (p.out.length ? p.out.join("/") : "–");
+  }
+  function linkInfo(a, b) {
+    var m = byAddr(); var ca = m[a], cb = m[b];
+    var ka = ca ? ca.kind : undefined, kb = cb ? cb.kind : undefined;
+    if (!kindKnown(ka) || !kindKnown(kb)) return { cls: "unk", label: "? → ?" };
+    var po = KIND_PORTS[ka].out, pi = KIND_PORTS[kb].in;
+    for (var i = 0; i < po.length; i++) if (pi.indexOf(po[i]) >= 0) return { cls: "ok", label: po[i] };
+    return { cls: "bad", label: "port mismatch" };
+  }
+  function byAddr() { var m = {}; if (state) state.cells.forEach(function (c) { m[c.addr] = c; }); return m; }
+  function fmtTs(ts) { return new Date(ts).toLocaleTimeString(); }
+
+  // ================= header + shared render =================
   function render() {
     if (!state) return;
     $("tick").textContent = state.tick === null ? "–" : state.tick;
     $("ledger").textContent = state.ledger ? (state.ledger.ok ? "ok" : "UNVERIFIED") : "–";
     $("tip").textContent = state.ledger && state.ledger.tip ? String(state.ledger.tip).slice(0, 10) + "…" : "–";
     $("ncells").textContent = state.cells.length;
+    $("nlinks").textContent = state.links.length;
+    renderSheet();
+    renderPipeline();
+    renderGrid();
+    if (selected) renderPanel(); else $("panel").style.display = "none";
+  }
+
+  // ================= TAB 1: sheet =================
+  function renderSheet() {
+    var rows = state.cells.map(function (c) {
+      return { c: c, ports: portsStr(c.kind), known: kindKnown(c.kind),
+               outs: state.links.filter(function (l) { return l[0] === c.addr; }),
+               ins: state.links.filter(function (l) { return l[1] === c.addr; }) };
+    });
+    rows.sort(function (x, y) {
+      function val(r) {
+        switch (sortKey) {
+          case "kind": return String(r.c.kind || "");
+          case "ports": return r.ports;
+          case "dials": return JSON.stringify(r.c.dials || []);
+          case "links": return String(r.outs.length);
+          default: return r.c.addr;
+        }
+      }
+      var vx = val(x), vy = val(y);
+      return vx < vy ? -sortDir : vx > vy ? sortDir : 0;
+    });
+    var cols = [["addr", "addr"], ["kind", "kind"], ["ports", "ports (in → out)"], ["dials", "dials"], ["links", "links (out)"]];
+    var th = "";
+    cols.forEach(function (col) {
+      var arrow = sortKey === col[0] ? (sortDir > 0 ? " ▲" : " ▼") : "";
+      th += '<th data-k="' + col[0] + '"' + (sortKey === col[0] ? ' class="son"' : "") + '>' + esc(col[1]) + arrow + '</th>';
+    });
+    $("sheet").querySelector("thead").innerHTML = "<tr>" + th + "</tr>";
+    Array.prototype.forEach.call($("sheet").querySelectorAll("th"), function (el) {
+      el.onclick = function () {
+        var k = el.getAttribute("data-k");
+        if (sortKey === k) sortDir = -sortDir; else { sortKey = k; sortDir = 1; }
+        renderSheet();
+      };
+    });
+    var tb = $("sheet").querySelector("tbody");
+    tb.innerHTML = "";
+    rows.forEach(function (r) {
+      var tr = document.createElement("tr");
+      tr.setAttribute("data-addr", r.c.addr);
+      if (selected === r.c.addr) tr.className = "sel";
+      var lk = "";
+      r.outs.forEach(function (l) {
+        var li = linkInfo(l[0], l[1]);
+        lk += '<span class="lkout ' + li.cls + '">→ ' + esc(l[1]) + (li.cls === "bad" ? '<span class="badge">port mismatch</span>' : '') + '</span>';
+      });
+      if (!r.outs.length) lk = '<span class="mut">–</span>';
+      tr.innerHTML =
+        '<td><span class="addr">' + esc(r.c.addr) + '</span></td>' +
+        '<td class="kind' + (r.known ? "" : " unk") + '" title="' + (r.known ? "known port semantics" : "unknown kind — ports assumed ? → ?") + '">' +
+          esc(r.c.kind || "") + (r.known ? "" : ' <span class="mut">?</span>') + '</td>' +
+        '<td class="ports' + (r.known ? "" : " unk") + '">' + esc(r.ports) + '</td>' +
+        '<td class="dials">' + dialHtml(r.c) + '</td>' +
+        '<td>' + lk + '</td>';
+      tr.onclick = function () { select(r.c.addr); };
+      tb.appendChild(tr);
+    });
+  }
+
+  // ================= TAB 2: pipeline =================
+  function buildChains() {
+    var m = byAddr();
+    var outMap = {}, inDeg = {};
+    state.cells.forEach(function (c) { outMap[c.addr] = []; inDeg[c.addr] = 0; });
+    state.links.forEach(function (l) {
+      var a = l[0], b = l[1];
+      if (m[a] && m[b] && a !== b) { outMap[a].push(b); inDeg[b]++; }
+    });
+    var visited = {}, chains = [];
+    function walkChain(start) {
+      var path = [], cur = start;
+      while (cur && !visited[cur]) {
+        visited[cur] = true; path.push(cur);
+        var nexts = outMap[cur].filter(function (n) { return !visited[n]; });
+        if (!nexts.length) break;
+        for (var i = 1; i < nexts.length; i++) chains.push(walkChain(nexts[i])); // branches become their own chains
+        cur = nexts[0];
+      }
+      return path;
+    }
+    state.cells.filter(function (c) { return inDeg[c.addr] === 0; })
+      .sort(function (a, b) { return a.addr < b.addr ? -1 : 1; })
+      .forEach(function (c) { if (!visited[c.addr]) chains.push(walkChain(c.addr)); });
+    state.cells.forEach(function (c) { if (!visited[c.addr]) chains.push(walkChain(c.addr)); }); // cycles
+    var connected = chains.filter(function (ch) { return ch.length > 1; });
+    var loose = chains.filter(function (ch) { return ch.length === 1; }).map(function (ch) { return ch[0]; })
+      .sort(function (a, b) { return a < b ? -1 : 1; });
+    return { chains: connected, loose: loose };
+  }
+  function pboxHtml(addr) {
+    var m = byAddr(); var c = m[addr]; if (!c) return "";
+    var known = kindKnown(c.kind);
+    return '<div class="pbox" data-addr="' + esc(addr) + '" title="click for detail + chips">' +
+      '<div><span class="addr">' + esc(addr) + '</span><span class="kind">' + esc(c.kind || "") + (known ? "" : " ?") + '</span></div>' +
+      '<div class="pports">in ' + esc(portsStr(c.kind)) + '</div>' +
+      '<div class="pdials">' + dialHtml(c) + '</div></div>';
+  }
+  function renderPipeline() {
+    var g = buildChains();
+    var el = $("chains"); el.innerHTML = "";
+    if (!g.chains.length && !g.loose.length) { el.innerHTML = '<div class="mut">no cells bound yet</div>'; return; }
+    g.chains.forEach(function (ch, i) {
+      var wrap = document.createElement("div");
+      wrap.innerHTML = '<div class="chainlabel">chain ' + (i + 1) + ' · ' + ch.length + ' cells</div>';
+      var row = document.createElement("div"); row.className = "chain";
+      ch.forEach(function (addr, j) {
+        row.innerHTML += pboxHtml(addr);
+        if (j < ch.length - 1) {
+          var li = linkInfo(ch[j], ch[j + 1]);
+          var lab = li.cls === "ok" ? esc(li.label) + " →" : li.cls === "bad" ? "✗ " + esc(li.label) + " →" : esc(li.label) + " →";
+          row.innerHTML += '<div class="parr ' + li.cls + '" data-a="' + esc(ch[j]) + '" data-b="' + esc(ch[j + 1]) + '">' + lab + '</div>';
+        }
+      });
+      wrap.appendChild(row);
+      Array.prototype.forEach.call(row.querySelectorAll(".pbox"), function (b) {
+        b.onclick = function () { select(b.getAttribute("data-addr")); };
+      });
+      el.appendChild(wrap);
+    });
+    if (g.loose.length) {
+      var wrap = document.createElement("div");
+      wrap.innerHTML = '<div class="chainlabel">loose cells · no links</div>';
+      var row = document.createElement("div"); row.className = "loose";
+      row.innerHTML = g.loose.map(pboxHtml).join("");
+      wrap.appendChild(row);
+      Array.prototype.forEach.call(row.querySelectorAll(".pbox"), function (b) {
+        b.onclick = function () { select(b.getAttribute("data-addr")); };
+      });
+      el.appendChild(wrap);
+    }
+  }
+
+  // ================= TAB 3: grid (preserved) =================
+  function renderGrid() {
     var g = $("grid"); g.innerHTML = "";
     state.cells.forEach(function (c) {
       var el = document.createElement("div");
       el.className = "cell" + (selected === c.addr ? " sel" : "");
+      el.setAttribute("data-addr", c.addr);
       el.innerHTML = '<span class="addr">' + esc(c.addr) + '</span> <span class="kind">' + esc(c.kind || "") + '</span>' +
                      '<div class="dials">' + dialHtml(c) + '</div>';
       el.onclick = function () { select(c.addr); };
@@ -292,15 +572,15 @@ function page() {
     var ll = $("linklist"); ll.innerHTML = "";
     if (!state.links.length) ll.innerHTML = '<div class="mut">no links</div>';
     state.links.forEach(function (l) {
-      var el = document.createElement("div"); el.className = "lk";
-      el.innerHTML = '<b>' + esc(l[0]) + '</b> → <b>' + esc(l[1]) + '</b>';
+      var li = linkInfo(l[0], l[1]);
+      var el = document.createElement("div"); el.className = "lk " + li.cls;
+      el.innerHTML = '<b>' + esc(l[0]) + '</b> → <b>' + esc(l[1]) + '</b>' +
+        '<span class="mut"> ' + esc(li.label) + '</span>' + (li.cls === "bad" ? '<span class="badge">port mismatch</span>' : '');
       ll.appendChild(el);
     });
-    if (selected) renderPanel();
   }
-  function chipHtml(label, cmd) {
-    return { label: label, cmd: cmd };
-  }
+
+  // ================= cell detail drawer (chips live here) =================
   function sockCmd(ndjson) {
     var node = 'const net=require("net");const s=net.createConnection(' + JSON.stringify(SOCK) + ');' +
                's.on("connect",()=>s.write(require("fs").readFileSync(0,"utf8")));' +
@@ -308,23 +588,34 @@ function page() {
     var payload = JSON.stringify(ndjson).replace(/'/g, "'\\''");
     return "echo '" + payload + "' | timeout 2 node -e '" + node + "'";
   }
+  function copyCmd(cmd, el) {
+    function done() {
+      var prev = el.className; el.className = prev + " copied";
+      var t = el.querySelector(".tag");
+      if (t) { var old = t.textContent; t.textContent = "copied ✓ (paste it in a shell — it runs only when YOU run it)"; setTimeout(function () { el.className = prev; t.textContent = old; }, 2500); }
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(cmd).then(done);
+    else { var ta = document.createElement("textarea"); ta.value = cmd; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove(); done(); }
+  }
   function renderPanel() {
     var c = state.cells.find(function (x) { return x.addr === selected; });
     if (!c) { selected = null; $("panel").style.display = "none"; return; }
     $("panel").style.display = "block";
     $("p-addr").textContent = c.addr;
     $("p-kind").textContent = c.kind || "";
+    var known = kindKnown(c.kind);
+    $("p-ports").textContent = "ports " + portsStr(c.kind) + (known ? "" : "  (unknown kind — assumed ? → ?)");
     $("p-dials").innerHTML = "raw dials: <b>" + esc(JSON.stringify(c.dials)) + "</b>" +
       (decode(c.kind, c.dials) ? '<div class="mut">decoded: ' + esc(decode(c.kind, c.dials).join(" · ")) + '</div>' : "");
     fetch("/cell/" + encodeURIComponent(c.addr)).then(function (r) { return r.json(); }).then(function (s) {
       $("p-src").textContent = s.source_excerpt !== null && s.source_excerpt !== undefined
-        ? "// " + s.source_path + (s.source_line ? " :" + s.source_line : "") + "\n" + s.source_excerpt
+        ? "// " + s.source_path + (s.source_line ? " :" + s.source_line : "") + "\\n" + s.source_excerpt
         : "// " + (s.reason || "no bind line found");
     });
     var chips = $("p-chips"); chips.innerHTML = "";
     var list = [
-      chipHtml("re-BIND " + c.addr + " (re-assert these dials)", sockCmd({ type: "opcode", op: "BIND", cell: c.addr, args: { dials: c.dials, kind: c.kind } })),
-      chipHtml("TICK the fabric", sockCmd({ type: "opcode", op: "TICK", cell: "graph", args: {} }))
+      { label: "re-BIND " + c.addr + " (re-assert these dials)", cmd: sockCmd({ type: "opcode", op: "BIND", cell: c.addr, args: { dials: c.dials, kind: c.kind } }) },
+      { label: "TICK the fabric", cmd: sockCmd({ type: "opcode", op: "TICK", cell: "graph", args: {} }) }
     ];
     var others = state.cells.filter(function (x) { return x.addr !== c.addr; }).map(function (x) { return x.addr; });
     if (others.length) {
@@ -333,7 +624,6 @@ function page() {
       others.forEach(function (a) { var o = document.createElement("option"); o.value = a; o.textContent = a; sel.appendChild(o); });
       var lbl = document.createElement("span"); lbl.className = "tag"; lbl.textContent = " LINK " + c.addr + " → ";
       var go = document.createElement("button"); go.className = "act"; go.textContent = "copy link command";
-      var cmd = null;
       go.onclick = function () { copyCmd(sockCmd({ type: "opcode", op: "LINK", cell: "graph", args: { a: c.addr, b: sel.value } }), go); };
       row.appendChild(lbl); row.appendChild(sel); row.appendChild(go);
       chips.appendChild(row);
@@ -346,50 +636,116 @@ function page() {
       chips.appendChild(el);
     });
   }
-  function copyCmd(cmd, el) {
-    function done() {
-      var prev = el.className; el.className = prev + " copied";
-      var t = el.querySelector(".tag");
-      if (t) { var old = t.textContent; t.textContent = "copied ✓ (paste it in a shell — it runs only when YOU run it)"; setTimeout(function () { el.className = prev; t.textContent = old; }, 2500); }
-    }
-    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(cmd).then(done);
-    else { var ta = document.createElement("textarea"); ta.value = cmd; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove(); done(); }
-  }
   function select(addr) {
     selected = addr; render();
-    loadReplies();
   }
-  function loadReplies() {
-    if (!selected) return;
-    fetch("/inbox").then(function (r) { return r.json(); }).then(function (ib) {
-      var mine = ib.questions.filter(function (q) { return q.addr === selected; });
-      var el = $("p-replies");
-      if (!mine.length) { el.className = "mut"; el.textContent = "no questions asked yet for " + selected; return; }
-      el.className = ""; el.innerHTML = "";
-      mine.forEach(function (q) {
-        var qd = document.createElement("div");
-        qd.innerHTML = '<span class="mut">Q·' + esc(new Date(q.ts).toLocaleTimeString()) + ' ·</span> ' + esc(q.question);
-        el.appendChild(qd);
-        if (!q.replies.length) { var w = document.createElement("div"); w.className = "mut"; w.textContent = "…awaiting operator"; el.appendChild(w); }
-        q.replies.forEach(function (r) {
-          var rd = document.createElement("div"); rd.className = "reply";
-          rd.innerHTML = '<span class="mut">A·operator</span><br>' + esc(r.reply !== undefined ? r.reply : JSON.stringify(r));
-          el.appendChild(rd);
-        });
-      });
+
+  // ================= LEFT: claw session thread =================
+  function opLabel(op) {
+    if (typeof op === "string") return op;
+    if (op && typeof op === "object") {
+      if (op.op === "link" && (op.from || op.to)) return "link " + (op.from || "?") + " → " + (op.to || "?");
+      var bits = [op.op || "op"];
+      if (op.addr) bits.push(op.addr);
+      if (op.kind) bits.push(op.kind);
+      if (bits.length > 1) return bits.join(" ");
+      return op.detail || op.op || JSON.stringify(op).slice(0, 48);
+    }
+    return String(op);
+ }
+  function opAddr(op) {
+    if (typeof op === "string") { var m = op.match(/\\b([A-Za-z]{1,2}[0-9]{1,3})\\b/); return m ? m[1] : null; }
+    if (op && typeof op === "object") return op.addr || op.from || op.to || null;
+    return null;
+ }
+  function replyEl(r) {
+    var d = document.createElement("div"); d.className = "msg op";
+    var from = r.from || "operator";
+    var head = '<span class="from ' + esc(from) + '">' + esc(from) + '</span>' +
+               '<span class="mut t">' + esc(fmtTs(r.ts || Date.now())) + '</span>';
+    var body = r.reply !== undefined && r.reply !== null ? r.reply : JSON.stringify(r);
+    d.innerHTML = head + '<div class="body">' + esc(body) + '</div>';
+    if (r.question) { var qq = document.createElement("div"); qq.className = "mut qref"; qq.textContent = "re: " + r.question; d.appendChild(qq); }
+    (r.ops_applied || []).forEach(function (op) {
+      var chip = document.createElement("span"); chip.className = "opchip";
+      chip.textContent = opLabel(op);
+      chip.title = "click to highlight the affected cell";
+      chip.onclick = function () { var a = opAddr(op); if (a) focusCell(a); };
+      d.appendChild(chip);
     });
+    return d;
   }
-  $("p-ask").onclick = function () {
-    var q = $("p-q").value.trim();
-    if (!q || !selected) { $("p-askmsg").textContent = "select a cell and type a question"; return; }
+  function renderThread(ib) {
+    var el = $("thread");
+    var stick = el.scrollTop + el.clientHeight >= el.scrollHeight - 48;
+    el.innerHTML = "";
+    if ((!ib.questions || !ib.questions.length) && !(ib.unmatched_replies || []).length) {
+      el.innerHTML = '<div class="mut empty">no messages yet — tell the agent what to build below.</div>';
+      return;
+    }
+    (ib.questions || []).forEach(function (q) {
+      var qd = document.createElement("div");
+      qd.className = "msg user" + (q.answered ? "" : " await");
+      qd.innerHTML = '<span class="from">you</span><span class="mut t">' + esc(fmtTs(q.ts)) +
+        (q.addr ? " · " + esc(q.addr) : "") + '</span><div class="body">' + esc(q.question) + '</div>';
+      if (!q.answered) { var w = document.createElement("div"); w.className = "awaiting"; w.textContent = "…awaiting operator"; qd.appendChild(w); }
+      el.appendChild(qd);
+      (q.replies || []).forEach(function (r) { el.appendChild(replyEl(r)); });
+    });
+    if ((ib.unmatched_replies || []).length) {
+      var u = document.createElement("div"); u.className = "mut"; u.style.marginTop = "16px";
+      u.textContent = "unmatched replies (no matching question):";
+      el.appendChild(u);
+      ib.unmatched_replies.forEach(function (r) { el.appendChild(replyEl(r)); });
+    }
+    if (stick) el.scrollTop = el.scrollHeight;
+  }
+  function pollThread() {
+    fetch("/inbox").then(function (r) { return r.json(); }).then(renderThread).catch(function () {});
+  }
+  function sendAsk() {
+    var v = $("q").value.trim();
+    if (!v) return;
+    $("sendmsg").textContent = "sending…";
     fetch("/ask", { method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ addr: selected, question: q }) })
+        body: JSON.stringify({ addr: "", question: v }) })
       .then(function (r) { return r.json(); })
       .then(function (o) {
-        $("p-askmsg").textContent = o.ok ? "logged (ts=" + o.ts + ") — check replies below" : "error: " + o.error;
-        if (o.ok) { $("p-q").value = ""; loadReplies(); }
+        if (o.ok) { $("q").value = ""; $("sendmsg").textContent = "logged ts=" + o.ts + " — awaiting operator"; pollThread(); }
+        else $("sendmsg").textContent = "error: " + o.error;
+        setTimeout(function () { $("sendmsg").textContent = "goes to /tmp/canvas-web-questions.jsonl — no fabric op is executed"; }, 4000);
       });
-  };
+  }
+  $("send").onclick = sendAsk;
+  $("q").addEventListener("keydown", function (e) {
+    if ((e.key === "Enter" && (e.ctrlKey || e.metaKey)) || (e.key === "Enter" && !e.shiftKey)) { e.preventDefault(); sendAsk(); }
+  });
+
+  // cross-panel highlight: ops_applied chip → affected cell in the right panel
+  function focusCell(addr) {
+    if (!addr || !state) return;
+    var el = $("tab-" + tab).querySelector('[data-addr="' + addr + '"]');
+    if (!el) { setTab("sheet"); el = $("tab-sheet").querySelector('[data-addr="' + addr + '"]'); }
+    if (!el) return;
+    selected = addr; render();
+    el = $("tab-" + tab).querySelector('[data-addr="' + addr + '"]');
+    if (!el) return;
+    el.classList.add("hl");
+    if (el.scrollIntoView) el.scrollIntoView({ block: "center" });
+    setTimeout(function () { el.classList.remove("hl"); }, 2600);
+  }
+
+  // tabs + presentation toggles
+  function setTab(t) {
+    tab = t;
+    ["sheet", "pipeline", "grid"].forEach(function (k) {
+      $("t-" + k).className = k === t ? "on" : "";
+      $("tab-" + k).className = "tab" + (k === t ? " on" : "");
+    });
+  }
+  ["sheet", "pipeline", "grid"].forEach(function (k) {
+    $("t-" + k).onclick = function () { setTab(k); };
+  });
   function setMode(m) {
     mode = m;
     ["raw", "dec", "bars"].forEach(function (k) { $("m-" + k).className = k === m ? "on" : ""; });
@@ -398,17 +754,32 @@ function page() {
   $("m-raw").onclick = function () { setMode("raw"); };
   $("m-dec").onclick = function () { setMode("dec"); };
   $("m-bars").onclick = function () { setMode("bars"); };
+  $("p-close").onclick = function () { selected = null; render(); };
+  $("p-ask").onclick = function () {
+    var q = $("p-q").value.trim();
+    if (!q || !selected) { $("p-askmsg").textContent = "select a cell and type a question"; return; }
+    fetch("/ask", { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ addr: selected, question: q }) })
+      .then(function (r) { return r.json(); })
+      .then(function (o) {
+        $("p-askmsg").textContent = o.ok ? "logged (ts=" + o.ts + ") — appears in the claw thread" : "error: " + o.error;
+        if (o.ok) { $("p-q").value = ""; pollThread(); }
+      });
+  };
+
+  // live wiring
   var es = new EventSource("/events");
   es.onopen = function () { $("dot").className = "on"; $("conn").textContent = "live (SSE)"; };
   es.onerror = function () { $("dot").className = ""; $("conn").textContent = "reconnecting…"; };
   es.onmessage = function (e) {
-    try { state = JSON.parse(e.data); } catch { return; }
+    try { state = JSON.parse(e.data); } catch (err) { return; }
     render();
   };
-  setInterval(loadReplies, 5000); // operator replies arrive out-of-band; poll the inbox lightly
+  pollThread();
+  setInterval(pollThread, 2000); // claw thread: poll /inbox every 2s
 })();
 </script>
-</body></html>`.replace("__SOCK__", sockJson);
+</body></html>`;
 }
 
 const server = http.createServer((req, res) => {
@@ -423,6 +794,11 @@ const server = http.createServer((req, res) => {
       sock: SOCK, connected: state.connected, tick: state.tick,
       ledger: { ok: state.ledgerOk, tip: state.ledgerTip },
       cells: state.cells, links: state.links, updated_at: state.updatedAt,
+    });
+  } else if (req.method === "GET" && p === "/ports") {
+    json(res, 200, {
+      registry: KIND_PORTS,
+      note: "display-layer port semantics only — the fabric is type-agnostic and never rejects a LINK on port types. Unknown kinds render as ? → ?. Link colors: green = endpoint port types match, red = mismatch, gray = unknown kind involved.",
     });
   } else if (req.method === "GET" && p === "/events") {
     res.writeHead(200, {
@@ -463,7 +839,7 @@ const server = http.createServer((req, res) => {
   } else if (req.method === "GET" && p === "/inbox") {
     json(res, 200, inbox());
   } else {
-    json(res, 404, { error: "not found", endpoints: ["/", "/state.json", "/events", "/cell/<addr>", "/ask (POST)", "/inbox"] });
+    json(res, 404, { error: "not found", endpoints: ["/", "/state.json", "/events", "/ports", "/cell/<addr>", "/ask (POST)", "/inbox"] });
   }
 });
 
