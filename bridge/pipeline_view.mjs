@@ -37,6 +37,7 @@ export const KIND_PORTS = {
   llm:     { in: "text",           out: "text" },
   tts:     { in: "text",           out: "digital-audio" },
   d2a:     { in: "digital-audio",  out: "analog-audio" },
+  mixer:   { in: "analog-audio",   out: "analog-audio" },
   speaker: { in: "analog-audio",   out: null },
   mem:     { in: "text",           out: "text" },
   net:     { in: "text",           out: "text" },
