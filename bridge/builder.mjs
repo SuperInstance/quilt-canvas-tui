@@ -8,7 +8,7 @@
 //   client -> controller: {"type":"opcode","op":"BIND","cell":"E1","args":{"dials":[0,0,0],"kind":"mic"}}
 //   controller -> all:    {"type":"update","tick":N,"cells":[...],"links":[...],"ledger":{"ok":true,"tip":..}}
 //
-// SAFETY: op whitelist is {bind,link,tick} — FORGET is REJECTED by design.
+// SAFETY: op whitelist is {bind,link,tick,save} — FORGET is REJECTED by design.
 // One FORGET seals an unverifiable receipt (PoEM gate trapdoor, issue #1) and bricks
 // every later mutation with LEDGER_UNVERIFIED until controller restart. The builder
 // never emits it, whatever the model asks for.
@@ -31,7 +31,7 @@ const MAX_CELLS = 64;
 const MAX_OPS_PER_TURN = 32;
 const OP_TIMEOUT_MS = 5000;
 const LLM_TIMEOUT_MS = 120000;
-const ALLOWED_OPS = new Set(["bind", "link", "tick"]);
+const ALLOWED_OPS = new Set(["bind", "link", "tick", "save"]);
 const ADDR_RE = /^[A-Z][0-9]{1,2}$/;
 
 function log(s) {
@@ -165,10 +165,13 @@ function validateOps(ops, fabric) {
   ops.forEach((op, i) => {
     const kind = op && typeof op === "object" ? String(op.op || "").toLowerCase() : "";
     if (!ALLOWED_OPS.has(kind)) {
-      notes.push(`op[${i}] REJECTED: "${kind || typeof op}" not in whitelist {bind,link,tick}`);
+      notes.push(`op[${i}] REJECTED: "${kind || typeof op}" not in whitelist {bind,link,tick,save}`);
       return;
     }
-    if (kind === "bind") {
+    if (kind === "save") {
+      const tier = op.tier === "full" || op.tier === "hint" ? op.tier : "gist";
+      valid.push({ op: "save", tier });
+    } else if (kind === "bind") {
       const addr = String(op.addr || "");
       if (!ADDR_RE.test(addr)) { notes.push(`op[${i}] REJECTED: bad addr ${JSON.stringify(op.addr)}`); return; }
       if (!cells.has(addr) && cells.size >= MAX_CELLS) { notes.push(`op[${i}] REJECTED: cell limit ${MAX_CELLS} reached`); return; }
@@ -214,6 +217,16 @@ async function executeOps(ops) {
     let links = (hello.links || []).map((l) => [l[0], l[1]]);
     let tick = hello.tick;
     for (const op of ops) {
+      if (op.op === "save") {
+        // local execution — the record writes to disk, no socket opcode exists for it
+        try {
+          const r = await saveRecord(op.tier || "gist");
+          receipts.push({ ...op, ok: true, detail: `record ${r.tier} → ${r.dir} (cells ${r.cells}, links ${r.links}, tip ${r.ledger.tip})`, tick_after: tick, verified: true, ledger_ok: true, ledger_tip: r.ledger.tip });
+        } catch (e) {
+          receipts.push({ ...op, ok: false, detail: "save failed: " + e.message, tick_after: tick, verified: false });
+        }
+        continue;
+      }
       const wire = toWire(op);
       c.write(wire);
       const upd = await c.next(OP_TIMEOUT_MS); // controller broadcasts after each opcode
@@ -332,9 +345,10 @@ Ops are executed in order. Op forms:
 - {"op":"bind","addr":"<ADDR>","kind":"<kind>","dials":[n,...]}  (bind a cell)
 - {"op":"link","from":"<ADDR>","to":"<ADDR>"}                    (link a <-> b — links are UNDIRECTED here; one link connects both cells, never emit the reverse of a link you already made)
 - {"op":"tick"}                                                  (advance the fabric tick)
+- {"op":"save","tier":"gist"}                                    (write a portable quilt-record to disk — use when the user asks to save/export/port the state; tier full|gist|hint)
 
 HARD CONSTRAINTS (violations are silently skipped and reported honestly in your reply):
-- Only bind / link / tick are allowed. FORGET is banned forever: one FORGET seals an unverifiable receipt and permanently bricks the ledger (PoEM gate trapdoor).
+- Only bind / link / tick / save are allowed. FORGET is banned forever: one FORGET seals an unverifiable receipt and permanently bricks the ledger (PoEM gate trapdoor).
 - addr must match ^[A-Z][0-9]{1,2}$ ; max 64 cells total ; dials numeric, max 8 entries ; both link endpoints must already be bound.
 - If a request would exceed these caps (e.g. "bind 100 cells"), DO NOT plan the whole thing — reply explaining the cap and ask a scope question proposing a decomposition into lanes of at most 32 ops per turn.
 

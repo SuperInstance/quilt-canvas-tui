@@ -13,9 +13,15 @@
 //   op.mjs ask "<question>" [--wait <sec=120>]   # post to the panel inbox, wait for builder/operator reply
 //   op.mjs inbox                 # unanswered questions
 //   op.mjs answers [n=3]
+//   op.mjs save [--tier full|gist|hint] [--out dir]   # write the portable record (quilt-record/v1)
+//   op.mjs since <engine>        # everything since THAT engine last read (per-engine cursor)
+//   op.mjs load <dir|file> [--apply]   # diff record vs live; converge with rebind-in-place
+//   op.mjs brief                 # spawn orientation: the routes a fresh agent walks
 //   op.mjs forget ...            # REFUSED. always. exit 2.
 import net from 'node:net';
 import fs from 'node:fs';
+import path from 'node:path';
+import { saveRecord, loadPlan, applyPlan, since, brief } from './record.mjs';
 
 const SOCK = process.env.QUILT_SOCK || '/tmp/quilt-canvas/socks/cudaclaw.sock';
 const QUESTIONS = '/tmp/canvas-web-questions.jsonl';
@@ -147,6 +153,40 @@ try {
       for (const l of lines.slice(-n)) console.log(l);
       break;
     }
+    case 'save': {
+      const tier = opt('--tier', 'full');
+      const out = opt('--out', null);
+      if (!['full', 'gist', 'hint'].includes(tier)) die('tier must be full|gist|hint');
+      const r = await saveRecord(tier, out);
+      console.log(JSON.stringify({ ok: true, ...r }));
+      break;
+    }
+    case 'since': {
+      const engine = args[0];
+      if (!engine) die('since needs an engine name (your cursor identity, e.g. since lucineer)');
+      console.log(JSON.stringify(await since(engine), null, 1));
+      break;
+    }
+    case 'load': {
+      const apply = args.includes('--apply');
+      const target = args.find((a) => !a.startsWith('--'));
+      if (!target) die('load needs a record dir or quilt-record.json (dry-run default; --apply converges)');
+      const f = fs.statSync(target).isDirectory() ? path.join(target, 'quilt-record.json') : target;
+      const rec = JSON.parse(fs.readFileSync(f, 'utf8'));
+      const [u] = await socketTurn([{ type: 'opcode', op: 'VIEW', cell: 'graph' }]);
+      const plan = loadPlan(rec, { cells: u.cells, links: u.links });
+      if (!apply) {
+        console.log(JSON.stringify({ dry_run: true, file: f, ...plan, next: 're-run with --apply to converge (rebind-in-place only)' }, null, 1));
+      } else {
+        const receipts = await applyPlan(plan);
+        const last = receipts[receipts.length - 1];
+        console.log(JSON.stringify({ applied: true, file: f, ops: receipts.length, plan: { to_bind: plan.to_bind.length, to_link: plan.to_link.length, conflicts: plan.conflicts.length }, ledger: last ? last.ledger : null }, null, 1));
+      }
+      break;
+    }
+    case 'brief':
+      console.log(brief());
+      break;
     default:
       die('unknown command ' + cmd + ' — see header comment for usage');
   }
