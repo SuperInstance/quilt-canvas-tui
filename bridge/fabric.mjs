@@ -113,16 +113,12 @@ export class Fabric {
       }
     }
     this.cells.delete(addr);
-    const parent = this.receipts.length ? this.receipts[this.receipts.length - 1].receipt_id : null;
-    const rid = sha256hex(stableStringify({ op: "FORGET", addr, parent })).slice(0, 16);
-    const rec = {
-      schema: "quilt/cell-receipt@v1", receipt_id: rid, parent, op: "FORGET", addr,
-      result: { cell: addr, forgotten: true }, graph_digest: this.graphDigest(),
-      mutating: true, elapsed_ms: 0,
-    };
-    if (this._signer) rec.sig = this._signer.sign(rec);
-    this.receipts.push(rec);
-    return { cell: addr, forgotten: true };
+    // Seal through _seal() so ONE rid formula covers every entry. A local
+    // formula here once diverged from _seal()'s preimage, and verifyChain()
+    // — which recomputes via the _seal() formula — could never reproduce the
+    // FORGET id, wedging the PoEM gate shut (LEDGER_UNVERIFIED on every
+    // mutation until restart). Fixes #1.
+    return this._seal("FORGET", addr, { cell: addr, forgotten: true }, {}, Date.now()).result;
   }
 
   _bind(addr, args) {
@@ -212,7 +208,7 @@ export class Fabric {
     const rid = sha256hex(raw).slice(0, 16);
     const rec = {
       schema: "quilt/cell-receipt@v1", receipt_id: rid, parent, op, addr, result,
-      graph_digest: this.graphDigest(), mutating: ["BIND", "LINK", "EFFECT", "TICK"].includes(op),
+      graph_digest: this.graphDigest(), mutating: ["BIND", "LINK", "EFFECT", "TICK", "FORGET"].includes(op),
       elapsed_ms: Date.now() - t0,
     };
     if (this._signer) rec.sig = this._signer.sign(rec); // identity plane: auth layered on the rid binding

@@ -91,3 +91,20 @@ test("T7 clean chain executes through the gate", () => {
   assert.ok(f.cells.has("Q1"));
   assert.equal(f.receipts[f.receipts.length - 1].op, "BIND");
 });
+
+test("T8 FORGET does not wedge the gate (trapdoor pin, fixes #1)", () => {
+  const f = fresh();
+  const r = f.forget("A1");
+  assert.ok(r.forgotten, "FORGET must execute");
+  // the trapdoor: forget() must seal through the same rid formula as _seal(),
+  // else verifyChain() can never reproduce the FORGET entry's id and the
+  // gate refuses EVERY subsequent mutating op until restart.
+  const v = f.verifyChain();
+  assert.equal(v.ok, true, `chain must still verify after FORGET: ${JSON.stringify(v.violations)}`);
+  const forgetRec = f.receipts[f.receipts.length - 1];
+  assert.equal(forgetRec.op, "FORGET");
+  assert.equal(forgetRec.mutating, true, "FORGET is a mutation and must be receipted as one");
+  const b = f.gated("BIND", "Q9", { dials: [1] });
+  assert.ok(!b.error, `post-FORGET gated BIND must run: ${JSON.stringify(b)}`);
+  assert.ok(f.cells.has("Q9"));
+});
